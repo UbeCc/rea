@@ -1,3 +1,4 @@
+import { isHopperSessionFailureCode } from "./hopperStartupFailure.js";
 import { jsonValueSchema, type JsonValue } from "./jsonValue.js";
 import { isImmutableJsonSnapshot } from "./immutableJson.js";
 
@@ -421,7 +422,9 @@ const providerErrorDetails = (
       provider_state: error.providerState,
       retry_action: providerRetryAction(
         error.providerState,
-        error.failureCode !== undefined || error.stage === "launch",
+        (error.failureCode !== undefined &&
+          !isHopperSessionFailureCode(error.failureCode)) ||
+          error.stage === "launch",
       ),
       ...(error.failureCode === undefined
         ? {}

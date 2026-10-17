@@ -8,6 +8,7 @@ import type {
 } from "./providerOperationHealth.js";
 import {
   hopperStartupFailure,
+  isHopperSessionFailureCode,
   type HopperStartupFailureCode,
   type HopperStartupFailureDiagnostic,
 } from "./hopperStartupFailure.js";
@@ -138,7 +139,7 @@ export class HopperProcessError extends HopperError {
     const failure = hopperStartupFailure(exitCode);
     this.stage =
       context.stage ??
-      (failure === undefined
+      (failure === undefined || isHopperSessionFailureCode(failure.code)
         ? context.operation === undefined
           ? "connection"
           : "analysis"

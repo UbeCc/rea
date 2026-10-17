@@ -106,6 +106,7 @@ export const parseConfig = (
         homeDirectoryFromEnvironment(environment, process.platform),
       ),
     hopperStartupTimeoutMs: env.REA_HOPPER_STARTUP_TIMEOUT_MS,
+    hopperMaxInstances: env.REA_HOPPER_MAX_INSTANCES,
     hopperTargetPath: env.HOPPER_TARGET_PATH,
     hopperTargetKind: env.HOPPER_TARGET_KIND,
     hopperLoaderArgs: env.loaderArgs,

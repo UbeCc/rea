@@ -221,6 +221,38 @@ describe("runtime collection configuration", () => {
   );
 });
 
+describe("Linux Hopper instance pool configuration", () => {
+  it("defaults and accepts the Linux Hopper instance pool size", () => {
+    expect(parseConfig({})).toMatchObject({
+      ok: true,
+      value: { hopperMaxInstances: 4 },
+    });
+    expect(parseConfig({ REA_HOPPER_MAX_INSTANCES: "8" })).toMatchObject({
+      ok: true,
+      value: { hopperMaxInstances: 8 },
+    });
+  });
+
+  it.each(["", "0", "-2", "1.5", "65", "many"])(
+    "rejects Linux Hopper instance pool size %j with its setting",
+    (value) => {
+      const result = parseConfig({ REA_HOPPER_MAX_INSTANCES: value });
+      if (result.ok) throw new Error("Expected invalid instance pool size");
+      expect(projectAnalysisError(result.error)).toMatchObject({
+        code: "configuration_invalid",
+        details: {
+          settings: [
+            {
+              setting: "REA_HOPPER_MAX_INSTANCES",
+              constraint: expect.any(String),
+            },
+          ],
+        },
+      });
+    },
+  );
+});
+
 describe("configuration failure diagnostics", () => {
   it.each(["1", "900000", "2147483647"])(
     "accepts Hopper startup deadline %s without changing Ghidra's deadline",

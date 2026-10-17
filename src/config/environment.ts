@@ -15,6 +15,10 @@ import {
   DEFAULT_SWIFTC_COMPILE_TIMEOUT_MS,
   providerStartupTimeoutSchema,
 } from "./providerStartupTimeout.js";
+import {
+  DEFAULT_HOPPER_MAX_INSTANCES,
+  MAX_HOPPER_INSTANCES,
+} from "./hopperInstances.js";
 import { mcpInputSchemaProfileSchema } from "./mcpInputSchemaProfile.js";
 import { mcpOutputSchemaProfileSchema } from "./mcpOutputSchemaProfile.js";
 import { mcpResponseBudgetSchema } from "./mcpResponseBudget.js";
@@ -60,6 +64,12 @@ const environmentSchema = z.object({
   REA_HOPPER_STARTUP_TIMEOUT_MS: providerStartupTimeoutSchema.default(
     DEFAULT_HOPPER_STARTUP_TIMEOUT_MS,
   ),
+  REA_HOPPER_MAX_INSTANCES: z
+    .string()
+    .regex(/^[1-9]\d*$/u, "must be a positive decimal integer")
+    .transform(Number)
+    .pipe(z.number().int().min(1).max(MAX_HOPPER_INSTANCES))
+    .default(DEFAULT_HOPPER_MAX_INSTANCES),
   REA_SWIFTC_COMPILE_TIMEOUT_MS: providerStartupTimeoutSchema.default(
     DEFAULT_SWIFTC_COMPILE_TIMEOUT_MS,
   ),

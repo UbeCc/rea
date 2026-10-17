@@ -27,6 +27,8 @@ export interface AppConfig {
   readonly ilspyCmdPath: string | undefined;
   readonly hopperLauncherPath: string;
   readonly hopperStartupTimeoutMs: number;
+  /** Concurrent Linux demo applications shared by cooperating REA processes. */
+  readonly hopperMaxInstances: number;
   readonly hopperTargetPath: string | undefined;
   readonly hopperTargetKind: "executable" | "database";
   readonly hopperLoaderArgs: readonly string[];

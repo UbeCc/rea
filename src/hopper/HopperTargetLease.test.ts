@@ -245,6 +245,64 @@ describe("Linux Hopper application leases", () => {
     if (reopened.acquired) await reopened.lease.release();
   });
 
+  it("grants at most maxInstances concurrent slots and reuses a released one", async () => {
+    const directory = await temporaryDirectory();
+    const held = [];
+    for (const runId of ["a", "b", "c"]) {
+      const acquired = await acquireLinuxHopperApplicationLease({
+        directory,
+        runId,
+        maxInstances: 3,
+      });
+      expect(acquired.acquired).toBe(true);
+      if (acquired.acquired) held.push(acquired.lease);
+    }
+    try {
+      expect(
+        new Set(held.map((lease) => lease.socketPath)).size,
+        "each owner holds a distinct slot",
+      ).toBe(3);
+      expect(
+        await acquireLinuxHopperApplicationLease({
+          directory,
+          runId: "overflow",
+          maxInstances: 3,
+        }),
+      ).toMatchObject({ acquired: false, owner: { runId: "a" } });
+      // A single-instance caller still observes the historical singleton slot.
+      expect(
+        await acquireLinuxHopperApplicationLease({ directory, runId: "legacy" }),
+      ).toMatchObject({ acquired: false, owner: { runId: "a" } });
+      await held[1]?.release();
+      const reused = await acquireLinuxHopperApplicationLease({
+        directory,
+        runId: "d",
+        maxInstances: 3,
+      });
+      expect(reused).toMatchObject({ acquired: true });
+      if (reused.acquired) {
+        expect(reused.lease.socketPath).toBe(held[1]?.socketPath);
+        held[1] = reused.lease;
+      }
+    } finally {
+      await Promise.all(held.map((lease) => lease.release()));
+    }
+  });
+
+  it("rejects a non-positive instance count before reserving anything", async () => {
+    const directory = await temporaryDirectory();
+    await expect(
+      acquireLinuxHopperApplicationLease({
+        directory,
+        runId: "zero",
+        maxInstances: 0,
+      }),
+    ).rejects.toMatchObject({
+      userMessage: expect.stringMatching(/REA_HOPPER_MAX_INSTANCES/u),
+    });
+    expect(await readdir(directory)).toEqual([]);
+  });
+
   it.each(["silent", "malformed", "invalid-pid", "closed"] as const)(
     "keeps a live endpoint when its owner response is %s",
     async (behavior) => {

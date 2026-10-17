@@ -257,6 +257,7 @@ export class HopperProvider implements AnalysisProviderCandidate {
         ...(this.platform === "linux"
           ? {
               launchMode: "verified_linux_demo" as const,
+              maxLinuxInstances: this.config.hopperMaxInstances,
               demoHelperPath: fileURLToPath(
                 new URL("../../scripts/hopper-demo-x11.py", import.meta.url),
               ),

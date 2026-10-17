@@ -594,20 +594,34 @@ failure. On CachyOS, an unversioned compatibility package such as
 the package conflict yourself or install Hopper's official package manually,
 then rerun `rea setup`.
 
-The supported Linux demo forwards additional launches into its existing
-application, even across private displays. REA therefore reserves one Linux
-Hopper application per user across cooperating REA processes. A competing
-CLI or MCP session receives the owning session ID before Hopper is launched,
-for both the same target and a different target. Switch targets through that
-MCP session, or close it before starting another session. Closing the owner
-releases the reservation and stops REA's owned demo application and private
-display; the headless Linux demo does not retain documents after MCP shutdown.
+The Linux demo is a single-instance application: at startup it creates
+`$TMPDIR/hopper-lockfile` and listens on `$TMPDIR/HopperSingleApplication`, and
+a later launch that finds that lock connects to the socket, forwards its
+arguments, and exits. REA gives every owned demo application a private
+owner-only `TMPDIR` inside its session runtime directory, so each application
+has its own lock and socket and never forwards into, or receives, another
+session's launch. Cooperating REA processes share at most
+`REA_HOPPER_MAX_INSTANCES` concurrent Linux demo applications per user (default
+4, maximum 64). Each application uses about 200–300 MiB of memory plus the
+target's analysis state; lower the value on small hosts. When every slot is in
+use, a new CLI or MCP session waits briefly for one to be released and then
+reports one current owner session ID before Hopper is launched. Send related
+queries through one MCP session to reuse its application. Closing the owner
+releases its slot and stops REA's owned demo application and private display;
+the headless Linux demo does not retain documents after MCP shutdown.
 Its helper watches a private lifetime pipe, so an owner crash or SIGKILL also
 stops those children, without relying on a reusable PID or a process-name scan.
 A later session recovers the dead owner's stale lease after child cleanup;
 private runtime files can remain when REA itself was killed. This does not attach to
 or claim ownership of manually opened Hopper applications. An application left
 running by an older REA version must still be closed before starting a new session.
+
+The demo ends each application session after about 30 minutes with a modal
+error dialog that blocks further analysis. From 25 minutes after launch, REA's
+helper watches its private display for that dialog; when it appears, REA stops
+the owned application and reports `demo_session_expired`. Reopen the target
+(`open_binary`, or rerun the command) to start a new demo session; analysis
+state that was not exported is lost.
 
 Stale lease recovery is serialized. If an interrupted recovery leaves its
 reservation directory, the diagnostic identifies that exact path. Stop REA

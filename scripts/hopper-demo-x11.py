@@ -35,6 +35,13 @@ UNEXPECTED_DISPLAY_GEOMETRY = 77
 X11_INPUT_FAILED = 78
 RUNTIME_DEPENDENCY_UNAVAILABLE = 79
 X11_SOCKET_DIRECTORY_UNUSABLE = 80
+DEMO_SESSION_EXPIRED = 81
+# The vendor demo ends each application session after about 30 minutes with a
+# modal "Error" dialog transient for the main window (observed at 1755-1815 s).
+# Earlier "Error" dialogs belong to analysis and are left to Hopper.
+DEMO_EXPIRY_MIN_SECONDS = 25 * 60
+DEMO_EXPIRY_POLL_SECONDS = 2.0
+EXPIRY_DIALOG_TITLES = {"Error", "Error — Hopper Disassembler"}
 DIAGNOSTIC_PREFIX = "REA_X11_DIAGNOSTIC="
 X11_SOCKET_DIRECTORY = Path("/tmp/.X11-unix")
 class AdapterFailure(Exception):
@@ -158,8 +165,43 @@ class OwnerLifetime:
         return True
 
 
-def wait_for_hopper(child: subprocess.Popen[bytes], owner: OwnerLifetime) -> int:
+class ExpiryWatch:
+    """Observes the owned private display for the demo-expiry dialog."""
+
+    def __init__(self, x11: ctypes.CDLL, display: int, started: float) -> None:
+        self.x11 = x11
+        self.display = display
+        self.root = x11.XDefaultRootWindow(display)
+        self.started = started
+        self.next_check = started + DEMO_EXPIRY_MIN_SECONDS
+
+    def expired(self) -> bool:
+        now = time.monotonic()
+        if now < self.next_check:
+            return False
+        self.next_check = now + DEMO_EXPIRY_POLL_SECONDS
+        for candidate in windows(self.x11, self.display, self.root):
+            window = candidate[0]
+            if window_title(self.x11, self.display, window) not in EXPIRY_DIALOG_TITLES:
+                continue
+            parent = window_transient_for(self.x11, self.display, window)
+            if parent is not None and window_title(self.x11, self.display, parent) == HOPPER_WINDOW_TITLE:
+                return True
+        return False
+
+
+def wait_for_hopper(
+    child: subprocess.Popen[bytes],
+    owner: OwnerLifetime,
+    expiry: ExpiryWatch | None = None,
+) -> int:
     while owner.alive():
+        if expiry is not None and expiry.expired():
+            raise AdapterFailure(
+                DEMO_SESSION_EXPIRED,
+                "demo_session_expired",
+                "Hopper demo session expired",
+            )
         try:
             return child.wait(timeout=0.1)
         except subprocess.TimeoutExpired:
@@ -405,6 +447,7 @@ def failure_name(code: int) -> str:
         X11_INPUT_FAILED: "x11_input_failed",
         RUNTIME_DEPENDENCY_UNAVAILABLE: "runtime_dependency_unavailable",
         X11_SOCKET_DIRECTORY_UNUSABLE: "x11_socket_directory_unusable",
+        DEMO_SESSION_EXPIRED: "demo_session_expired",
     }[code]
 
 
@@ -457,6 +500,27 @@ def mount_private_x11() -> None:
             "mount_validation_failed",
             "private X11 mount validation failed",
         )
+
+
+def private_tmpdir(session: Path) -> Path:
+    """Create the owner-only temporary directory for one Hopper application."""
+    directory = session / "hopper-tmp"
+    try:
+        directory.mkdir(mode=0o700)
+        info = directory.lstat()
+    except OSError as error:
+        raise AdapterFailure(
+            INVALID_LAUNCH_COMMAND,
+            "private_tmpdir_unavailable",
+            "private Hopper TMPDIR unavailable",
+        ) from error
+    if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid():
+        raise AdapterFailure(
+            INVALID_LAUNCH_COMMAND,
+            "private_tmpdir_unavailable",
+            "private Hopper TMPDIR is not owned by this user",
+        )
+    return directory
 
 
 def stop_process(process: subprocess.Popen[bytes]) -> None:
@@ -706,6 +770,10 @@ def run_launch(args: argparse.Namespace) -> int:
             hopper_environment.pop(name, None)
         hopper_environment.update(
             {
+                # Hopper's single-instance lock file and forwarding socket
+                # live in TMPDIR; a private one keeps each owned application
+                # from forwarding into, or receiving, another session's launch.
+                "TMPDIR": str(private_tmpdir(socket.parent)),
                 "DISPLAY": display_name,
                 "XAUTHORITY": str(authority),
                 "GDK_BACKEND": "x11",
@@ -717,6 +785,7 @@ def run_launch(args: argparse.Namespace) -> int:
         child = subprocess.Popen(
             command, env=hopper_environment, stdin=subprocess.DEVNULL
         )
+        started = time.monotonic()
         leader = os.getpid()
         os.environ["XAUTHORITY"] = str(authority)
 
@@ -755,9 +824,7 @@ def run_launch(args: argparse.Namespace) -> int:
             if not owner.alive():
                 return 0
             if socket.exists():
-                x11.XCloseDisplay(display)
-                display = None
-                return wait_for_hopper(child, owner)
+                return wait_for_hopper(child, owner, ExpiryWatch(x11, display, started))
             if not hopper_is_owned(leader, hopper):
                 if child.poll() is None:
                     time.sleep(0.1)
@@ -799,9 +866,7 @@ def run_launch(args: argparse.Namespace) -> int:
                 "private X input failed",
             )
         x11.XFlush(display)
-        x11.XCloseDisplay(display)
-        display = None
-        return wait_for_hopper(child, owner)
+        return wait_for_hopper(child, owner, ExpiryWatch(x11, display, started))
     except AdapterFailure as error:
         raise error.with_stderr(capture)
     finally:

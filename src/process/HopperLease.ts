@@ -62,12 +62,45 @@ export const acquireMacHopperApplicationLease = async (input: {
   });
 };
 
-/** Reserve the Linux demo's singleton application before it can forward a target to another owner. */
-export const acquireLinuxHopperApplicationLease = (input: {
+/**
+ * Reserve one of `maxInstances` Linux demo application slots.
+ *
+ * The Linux demo's single-instance guard (a Qt lock file and local socket)
+ * lives in its `TMPDIR`. REA gives every owned application a private `TMPDIR`
+ * inside the session's runtime root, so separate slots cannot forward a
+ * launch into each other; the slots only bound concurrent resource use.
+ * Slot 0 keeps the historical singleton identity, so older REA sessions that
+ * hold it still count against the pool.
+ */
+export const acquireLinuxHopperApplicationLease = async (input: {
   readonly runId: string;
   readonly directory?: string;
-}): Promise<HopperTargetLeaseAcquisition> =>
-  acquireLease({ ...input, identity: { application: "linux-hopper-demo" } });
+  readonly maxInstances?: number;
+}): Promise<HopperTargetLeaseAcquisition> => {
+  const maxInstances = input.maxInstances ?? 1;
+  if (!Number.isSafeInteger(maxInstances) || maxInstances < 1)
+    throw new HopperStartError({
+      userMessage: `REA_HOPPER_MAX_INSTANCES must be a positive integer; received ${String(maxInstances)}.`,
+    });
+  let firstOwner: HopperTargetLeaseOwner | undefined;
+  for (let slot = 0; slot < maxInstances; slot += 1) {
+    const acquisition = await acquireLease({
+      runId: input.runId,
+      ...(input.directory === undefined ? {} : { directory: input.directory }),
+      identity:
+        slot === 0
+          ? { application: "linux-hopper-demo" }
+          : { application: "linux-hopper-demo", slot },
+    });
+    if (acquisition.acquired) return acquisition;
+    firstOwner ??= acquisition.owner;
+  }
+  if (firstOwner === undefined)
+    throw new HopperStartError({
+      userMessage: "REA could not reserve a Linux Hopper instance slot.",
+    });
+  return { acquired: false, owner: firstOwner };
+};
 
 /** Serialize approved publication/repair of one canonical signed-package entry. */
 export const acquireHopperReleaseCacheLease = async (input: {
@@ -156,7 +189,7 @@ const tryAcquireLease = async (
   // alive; process exit leaves a stale socket that later acquirers recover.
   server.unref();
   if (!(await bind(server, socketPath))) {
-    const existingOwner = await readOwner(socketPath);
+    const existingOwner = await probeLeaseOwner(socketPath);
     return typeof existingOwner === "string"
       ? existingOwner
       : { acquired: false, owner: existingOwner };
@@ -183,7 +216,9 @@ const tryAcquireLease = async (
   };
 };
 
-const ensureLeaseDirectory = async (directory: string): Promise<void> => {
+export const ensureLeaseDirectory = async (
+  directory: string,
+): Promise<void> => {
   try {
     await mkdir(directory, { recursive: true, mode: 0o700 });
   } catch (cause: unknown) {
@@ -269,7 +304,8 @@ const sendOwner = (socket: Socket, owner: HopperTargetLeaseOwner): void => {
   socket.end(`${JSON.stringify(owner)}\n`);
 };
 
-const readOwner = (
+/** Probe a lease-style socket: its owner, or whether it is missing or stale. */
+export const probeLeaseOwner = (
   socketPath: string,
 ): Promise<HopperTargetLeaseOwner | "missing" | "stale"> =>
   new Promise((resolveOwner, rejectOwner) => {

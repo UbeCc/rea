@@ -31,7 +31,14 @@ import {
   acquireLinuxHopperApplicationLease,
   acquireMacHopperApplicationLease,
 } from "../process/HopperLease.js";
-import type { HopperTargetLease } from "../process/HopperLease.js";
+import type {
+  HopperTargetLease,
+  HopperTargetLeaseAcquisition,
+} from "../process/HopperLease.js";
+import {
+  enterLinuxHopperQueue,
+  type HopperQueueTicket,
+} from "../process/HopperQueue.js";
 import { HOPPER_SHUTDOWN_TIMEOUT_MS } from "./HopperSessionValues.js";
 import { verifyMacHopperNativeHelper } from "./HopperMacPublisher.js";
 import { inspectLinuxHopperLauncher } from "../application/LinuxHopper.js";
@@ -39,7 +46,7 @@ import { retryLinuxHopperPublisherCleanup } from "../application/LinuxHopperPubl
 
 const execFileAsync = promisify(execFile);
 const HOPPER_BACKGROUND_STARTUP_MS = 5_000;
-/** Bounded wait for another REA session to release macOS Hopper. */
+/** Bounded wait for another REA session to release a Hopper application slot. */
 export const HOPPER_APPLICATION_LEASE_WAIT_MS = 30_000;
 const HOPPER_APPLICATION_LEASE_POLL_MS = 500;
 
@@ -98,6 +105,8 @@ interface SharedHopperApplicationLauncherOptions {
   readonly targetKind: "executable" | "database";
   readonly loaderArgs: readonly string[];
   readonly bridgeScriptPath: string;
+  /** Linux demo application slots shared by cooperating REA processes. */
+  readonly maxLinuxInstances?: number;
   readonly preparedImage?: {
     readonly image: MachOThinSlice;
     readonly sourceSha256: string;
@@ -124,8 +133,12 @@ export interface HopperApplicationLauncherDependencies {
   readonly acquireApplicationLease?: (input: {
     readonly runId: string;
   }) => ReturnType<typeof acquireMacHopperApplicationLease>;
-  /** macOS wait for a competing session before reporting its owner. */
+  /** Wait for a competing session before reporting its owner. */
   readonly applicationLeaseWaitMs?: number;
+  /** FIFO queue shared by processes waiting for a Linux application slot. */
+  readonly enterApplicationQueue?: (input: {
+    readonly runId: string;
+  }) => Promise<HopperQueueTicket>;
   readonly selectPrivateDisplay?: (options: {
     readonly environment: Readonly<NodeJS.ProcessEnv>;
     readonly helperPath: string;
@@ -372,41 +385,47 @@ export class HopperApplicationLauncher implements BridgeLauncher {
     const acquire =
       this.dependencies.acquireApplicationLease ??
       (linuxDemo
-        ? acquireLinuxHopperApplicationLease
+        ? (input: { readonly runId: string }) =>
+            acquireLinuxHopperApplicationLease({
+              ...input,
+              maxInstances: this.options.maxLinuxInstances ?? 1,
+            })
         : (input: { readonly runId: string }) =>
             acquireMacHopperApplicationLease({
               ...input,
               launcherPath: this.options.launcherPath,
             }));
-    // The Linux demo forwards a launch to its singleton immediately; keep its
-    // fail-fast contract. macOS sessions are commonly short CLI calls, so wait
-    // briefly for the current owner before reporting it.
-    const waitMs = linuxDemo
-      ? 0
-      : (this.dependencies.applicationLeaseWaitMs ??
-        HOPPER_APPLICATION_LEASE_WAIT_MS);
-    const waitStarted = Date.now();
+    // Sessions are commonly short CLI calls, so wait briefly for a slot
+    // before reporting its current owner. Each Linux slot has a private
+    // TMPDIR, so a reserved slot can never forward into another owner.
+    const waitMs =
+      this.dependencies.applicationLeaseWaitMs ??
+      HOPPER_APPLICATION_LEASE_WAIT_MS;
+    // Waiters for the real Linux slot store queue FIFO across processes, so
+    // a newcomer cannot overtake a session that is already waiting.
+    const enterQueue =
+      this.dependencies.enterApplicationQueue ??
+      (linuxDemo && this.dependencies.acquireApplicationLease === undefined
+        ? enterLinuxHopperQueue
+        : undefined);
     try {
-      for (;;) {
-        const acquisition = await acquire({ runId });
-        if (acquisition.acquired) return ok(acquisition.lease);
-        const remaining = waitMs - (Date.now() - waitStarted);
-        if (remaining <= 0)
-          return err(
-            this.#applicationBusy(
-              acquisition.owner,
+      const waited = await waitForApplicationSlot({
+        acquire,
+        enterQueue,
+        runId,
+        waitMs,
+        signal,
+      });
+      if (waited.ok) return ok(waited.value);
+      return err(
+        waited.error === "cancelled"
+          ? new HopperCancelledError()
+          : this.#applicationBusy(
+              waited.error.owner,
               linuxDemo,
-              Date.now() - waitStarted,
+              waited.error.waitedMs,
             ),
-          );
-        if (
-          (await waitForAbortableDelay(
-            Math.min(HOPPER_APPLICATION_LEASE_POLL_MS, remaining),
-            signal,
-          )) === "aborted"
-        )
-          return err(new HopperCancelledError());
-      }
+      );
     } catch (cause: unknown) {
       return err(
         cause instanceof HopperStartError
@@ -424,7 +443,7 @@ export class HopperApplicationLauncher implements BridgeLauncher {
     return new HopperStartError({
       ownerRunId: owner.runId,
       userMessage: linuxDemo
-        ? `Linux Hopper is already active in REA session ${owner.runId}; it cannot open ${this.options.targetPath} in another session. This build forwards new launches to the existing application. Use the owning REA session to switch targets, or close it before retrying.`
+        ? `All ${String(this.options.maxLinuxInstances ?? 1)} Linux Hopper instance slot(s) are in use (for example by REA session ${owner.runId}, process ${owner.processId}); REA waited ${Math.round(waitedMs / 1_000)} s and did not open ${this.options.targetPath}. Retry after a session closes, send related queries through one MCP session, or raise REA_HOPPER_MAX_INSTANCES if the host has memory for more demo applications.`
         : `Hopper is already serving REA session ${owner.runId} (process ${owner.processId}); it cannot open ${this.options.targetPath} in another session. macOS Hopper runs one REA session at a time because each REA bridge occupies Hopper's single Python thread until its session closes. REA waited ${Math.round(waitedMs / 1_000)} s. Send related queries through one session (for example MCP open_binary followed by batch_decompile), or retry after that session closes.`,
     });
   }
@@ -536,6 +555,64 @@ const launchHopperProcess = async (input: {
       ...(input.signal === undefined ? {} : { signal: input.signal }),
     });
   return spawn(input.argumentsForTarget);
+};
+
+type ApplicationLeaseAcquire = (input: {
+  readonly runId: string;
+}) => Promise<HopperTargetLeaseAcquisition>;
+
+/**
+ * Poll for an application slot until `waitMs` elapses. With a queue ticket,
+ * only the oldest live waiter polls; at the deadline every waiter tries once
+ * so a busy result can name a current owner.
+ */
+const waitForApplicationSlot = async (input: {
+  readonly acquire: ApplicationLeaseAcquire;
+  readonly enterQueue:
+    | ((input: { readonly runId: string }) => Promise<HopperQueueTicket>)
+    | undefined;
+  readonly runId: string;
+  readonly waitMs: number;
+  readonly signal: AbortSignal | undefined;
+}): Promise<
+  Result<
+    HopperTargetLease,
+    | "cancelled"
+    | {
+        readonly owner: { readonly runId: string; readonly processId: number };
+        readonly waitedMs: number;
+      }
+  >
+> => {
+  const started = Date.now();
+  const ticket = await input.enterQueue?.({ runId: input.runId });
+  try {
+    for (;;) {
+      const remaining = input.waitMs - (Date.now() - started);
+      const mayTry =
+        ticket === undefined || remaining <= 0 || (await ticket.isHead());
+      if (mayTry) {
+        const acquisition = await input.acquire({ runId: input.runId });
+        if (acquisition.acquired) return ok(acquisition.lease);
+        if (remaining <= 0)
+          return err({
+            owner: acquisition.owner,
+            waitedMs: Date.now() - started,
+          });
+      }
+      if (
+        (await waitForAbortableDelay(
+          Math.min(HOPPER_APPLICATION_LEASE_POLL_MS, remaining),
+          input.signal,
+        )) === "aborted"
+      )
+        return err("cancelled");
+    }
+  } finally {
+    // An unclosed ticket is unreferenced and ends with this process; later
+    // waiters skip it once it refuses connections.
+    await ticket?.leave().catch(() => undefined);
+  }
 };
 
 export const linuxDemoLaunch = (
