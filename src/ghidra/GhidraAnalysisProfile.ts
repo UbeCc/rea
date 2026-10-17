@@ -139,7 +139,8 @@ export const resolveGhidraAnalysisProfile = async (
           function_dossier_coverage:
             "observed-facets-and-call-relationships-v1",
           string_inventory_evidence: "defined-data-coverage-v1",
-          location_resolution: "explicit-address-exact-entry-symbol-first-v3",
+          location_resolution:
+            "explicit-address-exact-entry-symbol-first-objc-namespace-v4",
           procedure_file_offset_resolution:
             "address-first-unique-target-source-mapping-v2",
           instruction_flow_evidence: "decoded-return-pcode-v1",
@@ -249,7 +250,8 @@ export const resolveGhidraAnalysisProfile = async (
         call_relationship_coverage: callRelationshipCoverage,
         function_dossier_coverage: "observed-facets-and-call-relationships-v1",
         string_inventory_evidence: "defined-data-coverage-v1",
-        location_resolution: "explicit-address-exact-entry-symbol-first-v3",
+        location_resolution:
+          "explicit-address-exact-entry-symbol-first-objc-namespace-v4",
         procedure_file_offset_resolution:
           "address-first-unique-target-source-mapping-v2",
         instruction_flow_evidence: "decoded-return-pcode-v1",

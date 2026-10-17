@@ -7,11 +7,14 @@ API access on this thread: moving dispatch to a worker can deadlock Hopper.
 
 import json
 import hmac
+import re
 import os
 import socket
 from typing import Any, Optional, Protocol, Sequence
 
 BAD_ADDRESSES = (-1, 0xFFFFFFFFFFFFFFFF, None)
+# `Class::selector` or `Class(Category)::selector`; class names contain no colon.
+OBJC_QUALIFIED_METHOD = re.compile(r"^([^\s:\[\]]+)::([^\s\[\]]+)$")
 # The native label setter truncates NSString names at this UTF-16 extent.
 HOPPER_SYMBOL_NAME_UTF16_UNITS = 1024
 _rea_session_document = None
@@ -252,6 +255,8 @@ def _address(document, value=None):
         # when Hopper has no symbol with the supplied name.
         address = document.getAddressForName(value)
         if address in BAD_ADDRESSES:
+            address = _objc_qualified_method_address(document, value)
+        if address in BAD_ADDRESSES:
             try:
                 address = int(value, 16)
             except ValueError as error:
@@ -259,6 +264,29 @@ def _address(document, value=None):
     if not 0 <= address < 0xFFFFFFFFFFFFFFFF:
         raise InvalidRequestError("Address is outside Hopper's usable unsigned 64-bit range: %s" % value)
     return address
+
+
+def _objc_qualified_method_address(document, value):
+    """Map Ghidra's `Class::selector` method spelling to Hopper's bracketed names.
+
+    That spelling omits the class (+) or instance (-) kind, so both are tried
+    and a name present in both forms remains ambiguous.
+    """
+    match = OBJC_QUALIFIED_METHOD.match(value)
+    if match is None:
+        return BAD_ADDRESSES[0]
+    found = []
+    for kind in "-+":
+        name = "%s[%s %s]" % (kind, match.group(1), match.group(2))
+        address = document.getAddressForName(name)
+        if address not in BAD_ADDRESSES:
+            found.append((name, address))
+    if len(found) > 1:
+        raise InvalidRequestError(
+            "Objective-C method %s is ambiguous: %s; select one bracketed name or entry address"
+            % (value, ", ".join("%s at %s" % (name, _hex(address)) for name, address in found))
+        )
+    return found[0][1] if found else BAD_ADDRESSES[0]
 
 
 def _segment(document, address):

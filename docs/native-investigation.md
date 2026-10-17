@@ -46,6 +46,14 @@ flag; other values that begin with a dash still need the equals form. Missing
 selectors and conflicting positional/named values fail before analysis starts;
 identical selections agree.
 
+Objective-C method names are accepted in both provider spellings. Ghidra names
+class and instance methods `Class::selector`; when no exact symbol matches,
+`-[Class selector]` and `+[Class selector]` resolve to that procedure, and the
+result's limitations state that Ghidra did not verify the `+`/`-` kind. Two
+procedures with that name fail as ambiguous with their entry addresses. Hopper
+accepts `Class::selector` when exactly one of `-[Class selector]` and
+`+[Class selector]` exists. Exact native symbols always win.
+
 ## Native instruction, call and type primitives
 
 Ghidra supplies three exact-object operations:

@@ -176,6 +176,11 @@ public final class ReaGhidraBridge extends HeadlessScript {
     private List<InventoryItem> nameInventory;
     private List<FunctionEntry> procedureInventory;
     private List<InventoryItem> stringInventory;
+    /** Selector-mapping facts for the request being served; cleared per request. */
+    private final List<String> selectorLimitations = new ArrayList<>();
+    /** {@code -[Class(Category) selector]}; groups: kind, class, category, selector. */
+    private static final Pattern OBJC_METHOD_SELECTOR = Pattern.compile(
+        "([-+])\\[([^\\s\\[\\]()]+)(?:\\(([^\\s\\[\\]()]+)\\))? ([^\\s\\[\\]]+)\\]");
     private DecompInterface decompiler;
     private final ReaGhidraExtensions analysisExtensions = new ReaGhidraExtensions();
     private static AddressSpace sessionDefaultAddressSpace;
@@ -416,6 +421,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
 
     private JsonElement handleRequest(Request request, SessionDescriptor descriptor)
             throws Exception {
+        selectorLimitations.clear();
         if (request.method.equals("ping")) {
             requireKeys(request.params, Set.of());
             return sessionInfo(descriptor);
@@ -2185,6 +2191,42 @@ public final class ReaGhidraBridge extends HeadlessScript {
         return stringInventory;
     }
 
+    /**
+     * Ghidra's Objective-C analyzer names both class and instance methods
+     * {@code Class::selector}; Hopper, IDA and Apple tools spell them
+     * {@code -[Class selector]} or {@code +[Class selector]}. Map the bracketed
+     * form only after exact symbols miss, and report the unverified prefix.
+     */
+    private Function resolveObjcMethod(String value) throws Exception {
+        java.util.regex.Matcher method = OBJC_METHOD_SELECTOR.matcher(value);
+        if (!method.matches()) return null;
+        String owner = method.group(2);
+        String category = method.group(3);
+        String selector = method.group(4);
+        List<Function> matches = new ArrayList<>();
+        for (FunctionEntry entry : procedures()) {
+            monitor.checkCancelled();
+            Function function = entry.function;
+            ghidra.program.model.symbol.Namespace namespace = function.getParentNamespace();
+            if (!function.getName().equals(selector) || namespace == null || namespace.isGlobal()) continue;
+            String name = namespace.getName();
+            if (name.equals(owner) || (category != null && name.equals(owner + "(" + category + ")")))
+                matches.add(function);
+        }
+        if (matches.size() > 1)
+            throw new RequestFailure("ambiguous", "Objective-C method " + value + " matches " + matches.size() +
+                " Ghidra procedures named " + owner + "::" + selector +
+                "; Ghidra does not record the +/- method kind in that name. Select an exact entry address from " +
+                matches.stream().map(function -> canonicalAddress(function.getEntryPoint())).toList());
+        if (matches.isEmpty()) return null;
+        Function resolved = matches.get(0);
+        selectorLimitations.add("Objective-C selector " + value + " resolved to Ghidra procedure " +
+            resolved.getSymbol().getName(true) + " at " + canonicalAddress(resolved.getEntryPoint()) +
+            "; Ghidra's namespace name does not record whether it is a class (+) or instance (-) method, so the " +
+            method.group(1) + " prefix is unverified.");
+        return resolved;
+    }
+
     private Function resolveProcedure(String value) throws Exception {
         // Explicit address syntax wins; an unprefixed identifier is first an
         // exact symbol name, even when every character is a hexadecimal digit.
@@ -2216,6 +2258,8 @@ public final class ReaGhidraBridge extends HeadlessScript {
                     "; select an exact entry address from " + matches.stream()
                         .map(function -> canonicalAddress(function.getEntryPoint())).toList());
             if (matches.size() == 1) return matches.get(0);
+            Function method = resolveObjcMethod(value);
+            if (method != null) return method;
         }
         // Retain legacy bare-hex address input only when no symbol matches.
         Address address = explicitAddress ? parseReaAddress(value) : tryParseAddress(value);
@@ -3349,7 +3393,9 @@ public final class ReaGhidraBridge extends HeadlessScript {
             List<String> limitations) {
         JsonObject result = new JsonObject();
         result.add("value", value);
-        result.add("limitations", GSON.toJsonTree(limitations));
+        List<String> combined = new ArrayList<>(selectorLimitations);
+        combined.addAll(limitations);
+        result.add("limitations", GSON.toJsonTree(combined));
         return result;
     }
 
