@@ -245,6 +245,12 @@ Selected bounded text is then parsed as inert data to recover:
   the document base URL or Node's working directory, which static analysis
   does not establish, so they keep their expression and stay unresolved);
 - route, network endpoint, storage, and vendor-marker observations;
+- embedded third-party libraries inferred from preserved banner comments
+  (`/*!`, `@license`) or characteristic API shapes such as jQuery's
+  `{ jquery, constructor }` prototype or CodeMirror's `version` beside
+  `defineMode`/`defineMIME`/`fromTextArea` writes, with the literal version
+  when present, as inferred observations on the containing asset; a lone
+  `version` constant does not identify a library;
 - local source-map declarations and original
   source names and content digests;
 - explicit BrowserWindow options and `webPreferences`, including statically

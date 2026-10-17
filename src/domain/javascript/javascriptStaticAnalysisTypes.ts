@@ -137,6 +137,30 @@ export type JavaScriptNativeBridgeCall = {
   | { readonly channel: null; readonly channel_expression: string }
 );
 
+/** Confidence in an inferred embedded-library identification. */
+export type JavaScriptVendorLibraryConfidence = "high" | "medium" | "low";
+
+/**
+ * A third-party library inferred to be embedded in this source, from a
+ * preserved banner comment or a characteristic API shape. The version is the
+ * literal text at that site; null means it was not a literal and is unknown.
+ */
+export interface JavaScriptVendorLibrary {
+  readonly name: string;
+  readonly version: string | null;
+  readonly signal:
+    | "banner-comment"
+    | "object-keys"
+    | "member-writes"
+    | "member-names";
+  readonly mechanism: string;
+  readonly confidence: JavaScriptVendorLibraryConfidence;
+  readonly module_key: string | null;
+  /** Recovered factory runtime; absent in unbundled findings. */
+  readonly module_runtime?: string;
+  readonly location: JavaScriptSourceRange;
+}
+
 /** Deterministic AST-only analysis of one JavaScript source file. */
 export interface JavaScriptStaticAnalysis {
   readonly parse_status: "complete" | "partial" | "failed";
@@ -151,7 +175,10 @@ export interface JavaScriptStaticAnalysis {
     readonly declared_url: string;
     readonly location: JavaScriptSourceRange;
   }[];
+  /** Bundler and framework marker strings. */
   readonly vendors: readonly string[];
+  /** Embedded libraries inferred from banners and characteristic API shapes. */
+  readonly vendor_libraries: readonly JavaScriptVendorLibrary[];
   readonly electron: ElectronStaticFindings;
   readonly native_bridges: readonly JavaScriptNativeBridgeCall[];
   readonly limitations: readonly string[];

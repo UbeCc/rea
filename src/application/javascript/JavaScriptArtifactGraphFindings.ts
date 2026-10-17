@@ -33,6 +33,10 @@ type StaticEndpoint = JavaScriptStaticAnalysis["endpoints"][number];
 type StaticStorage = JavaScriptStaticAnalysis["storage"][number];
 type StaticRolePath = JavaScriptStaticAnalysis["role_paths"][number];
 type StaticSourceMap = JavaScriptStaticAnalysis["source_map_urls"][number];
+type StaticVendorLibrary = JavaScriptStaticAnalysis["vendor_libraries"][number];
+
+const VENDOR_LIBRARY_LIMITATION =
+  "The embedded library is inferred from a banner comment or characteristic API shape; copied, forked, or patched code is reported the same way and the version is the literal text at this site.";
 
 interface FindingInput<Value> {
   readonly file: JavaScriptArtifactFile;
@@ -71,6 +75,8 @@ export function* addJavaScriptStaticFindingsSteps(
       addDiscoveredRole(context, { file, asset, value, coverage });
     for (const value of javascript.source_map_urls)
       addSourceMapEdge(context, { file, asset, value, coverage });
+    for (const value of javascript.vendor_libraries)
+      addVendorLibrary(context, { file, asset, value, coverage });
   }
   return selfReferenceOmissions(
     omissions.selfReferences,
@@ -186,6 +192,44 @@ const addReference = (
       ...artifactPathResolutionProperties(resolved?.resolution),
     },
     ...(resolved === null ? {} : { limitations: resolved.limitations }),
+  });
+};
+
+/** Attach an inferred embedded library to the asset that contains it. */
+const addVendorLibrary = (
+  context: JavaScriptArtifactGraphContext,
+  input: FindingInput<StaticVendorLibrary>,
+): void => {
+  const { value } = input;
+  context.accumulator.addNode({
+    kind: input.asset.kind,
+    identity: input.asset.identity,
+    observations: [
+      {
+        label:
+          value.version === null
+            ? value.name
+            : `${value.name} ${value.version}`,
+        properties: {
+          embedded_library: value.name,
+          version: value.version,
+          signal: value.signal,
+          mechanism: value.mechanism,
+          ...(value.module_key === null
+            ? {}
+            : { module_key: value.module_key }),
+        },
+        evidence: staticInferenceEvidence({
+          sha256: input.file.sha256,
+          path: input.file.path,
+          range: value.location,
+          operation: "identify-embedded-library",
+          coverage: input.coverage,
+          confidence: value.confidence,
+          limitations: [VENDOR_LIBRARY_LIMITATION],
+        }),
+      },
+    ],
   });
 };
 

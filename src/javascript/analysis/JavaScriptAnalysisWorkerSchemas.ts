@@ -395,6 +395,24 @@ export const javaScriptWorkerStaticAnalysisSchema = z
       z.strictObject({ declared_url: z.string(), location: range }),
     ),
     vendors: strings,
+    vendor_libraries: z.array(
+      z
+        .strictObject({
+          ...findingContext,
+          module_runtime: z.string().exactOptional(),
+          name: z.string(),
+          version: z.string().nullable(),
+          signal: z.enum([
+            "banner-comment",
+            "object-keys",
+            "member-writes",
+            "member-names",
+          ]),
+          mechanism: z.string(),
+          confidence: z.enum(["high", "medium", "low"]),
+        })
+        .transform(withRuntime),
+    ),
     electron,
     native_bridges: z.array(
       z.union([
