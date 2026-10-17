@@ -83,6 +83,7 @@ import { ghidraPePdbLimitations } from "./GhidraPeProfile.js";
 import { unverifiedGhidraBuildLimitation } from "./GhidraReleasePolicy.js";
 import { GhidraHeadlessLauncher } from "./GhidraLauncher.js";
 import { GhidraAnalysisCache } from "./GhidraAnalysisCache.js";
+import { compactGhidraFailureDiagnostics } from "./GhidraDiagnosticLog.js";
 import { dirname } from "node:path";
 import { attestGhidraNativeLoadImage } from "./GhidraLoadImageAttest.js";
 import {
@@ -1184,13 +1185,29 @@ const projectSessionError = (
       ).bindCleanupDependencies([primary, failure.cleanupFailure]);
 };
 
+/** One compacted projection (and full-output file) per session failure. */
+const compactedDiagnostics = new WeakMap<
+  GhidraSessionError,
+  Readonly<Record<string, JsonValue>>
+>();
+const compactDiagnostics = (
+  failure: GhidraSessionError,
+): Readonly<Record<string, JsonValue>> => {
+  let compacted = compactedDiagnostics.get(failure);
+  if (compacted === undefined) {
+    compacted = compactGhidraFailureDiagnostics(failure.diagnostics);
+    compactedDiagnostics.set(failure, compacted);
+  }
+  return compacted;
+};
+
 const projectPrimarySessionError = (
   operation: AnalysisOperation,
   failure: GhidraSessionError,
   startupTimeoutMs: number,
   health?: ProviderOperationHealth,
 ): AnalysisError => {
-  const context = { cause: failure, diagnostics: failure.diagnostics };
+  const context = { cause: failure, diagnostics: compactDiagnostics(failure) };
   const physicalCause = artifactFilePrimaryFailure(failure.cause);
   if (physicalCause instanceof AnalysisAccessDeniedError)
     return new AnalysisAccessDeniedError(
