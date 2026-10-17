@@ -189,7 +189,7 @@ const tryAcquireLease = async (
   // alive; process exit leaves a stale socket that later acquirers recover.
   server.unref();
   if (!(await bind(server, socketPath))) {
-    const existingOwner = await readOwner(socketPath);
+    const existingOwner = await probeLeaseOwner(socketPath);
     return typeof existingOwner === "string"
       ? existingOwner
       : { acquired: false, owner: existingOwner };
@@ -216,7 +216,9 @@ const tryAcquireLease = async (
   };
 };
 
-const ensureLeaseDirectory = async (directory: string): Promise<void> => {
+export const ensureLeaseDirectory = async (
+  directory: string,
+): Promise<void> => {
   try {
     await mkdir(directory, { recursive: true, mode: 0o700 });
   } catch (cause: unknown) {
@@ -302,7 +304,8 @@ const sendOwner = (socket: Socket, owner: HopperTargetLeaseOwner): void => {
   socket.end(`${JSON.stringify(owner)}\n`);
 };
 
-const readOwner = (
+/** Probe a lease-style socket: its owner, or whether it is missing or stale. */
+export const probeLeaseOwner = (
   socketPath: string,
 ): Promise<HopperTargetLeaseOwner | "missing" | "stale"> =>
   new Promise((resolveOwner, rejectOwner) => {

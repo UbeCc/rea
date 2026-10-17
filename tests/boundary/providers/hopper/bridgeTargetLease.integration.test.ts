@@ -61,6 +61,92 @@ describe("Linux Hopper application leases in the launcher", () => {
     },
   );
 
+  it("preserves the reason that an existing lease could not be verified", async () => {
+    const failure = new HopperStartError({
+      userMessage: "Existing owner timed out; the lease was left unchanged",
+    });
+    const launcher = new HopperApplicationLauncher(
+      {
+        environment: {},
+        launcherPath: "/unused/Hopper",
+        targetPath: "/target",
+        targetKind: "executable",
+        loaderArgs: [],
+        bridgeScriptPath: "/rea/hopper_bridge.py",
+        launchMode: "verified_linux_demo",
+        demoHelperPath: "/rea/helper.py",
+      },
+      {
+        platform: "linux",
+        acquireApplicationLease: async () => {
+          throw failure;
+        },
+      },
+    );
+    expect(
+      await launcher.launch({
+        directory: "/missing/rea-launch",
+        socketPath: "/missing/rea-launch/bridge.sock",
+        token: "token",
+        runId: "new-session",
+      }),
+    ).toEqual({ ok: false, error: failure });
+  });
+});
+
+describe("Linux Hopper slot waiting in the launcher", () => {
+  it("does not try a Linux slot until its queue ticket reaches the head", async () => {
+    const events: string[] = [];
+    let headChecks = 0;
+    const result = await new HopperApplicationLauncher(
+      {
+        environment: {},
+        launcherPath: "/unused/Hopper",
+        targetPath: "/target",
+        targetKind: "executable",
+        loaderArgs: [],
+        bridgeScriptPath: "/rea/hopper_bridge.py",
+        launchMode: "verified_linux_demo",
+        demoHelperPath: "/rea/hopper-demo-x11.py",
+        maxLinuxInstances: 1,
+      },
+      {
+        platform: "linux",
+        applicationLeaseWaitMs: 5_000,
+        enterApplicationQueue: async () => ({
+          isHead: async () => {
+            headChecks += 1;
+            events.push(`head?${String(headChecks)}`);
+            return headChecks >= 3;
+          },
+          leave: async () => void events.push("leave"),
+        }),
+        acquireApplicationLease: async () => {
+          events.push("acquire");
+          return {
+            acquired: true,
+            lease: { release: async () => void events.push("release") },
+          };
+        },
+      },
+    ).launch({
+      directory: "/missing/rea-launch",
+      socketPath: "/missing/rea-launch/bridge.sock",
+      token: "token",
+      runId: "queued-session",
+    });
+    expect(result.ok).toBe(false);
+    // The ticket is left as soon as a slot is held, before launch fails.
+    expect(events).toEqual([
+      "head?1",
+      "head?2",
+      "head?3",
+      "acquire",
+      "leave",
+      "release",
+    ]);
+  });
+
   it("waits for a Linux instance slot instead of failing fast", async () => {
     let leaseChecks = 0;
     let releases = 0;
@@ -103,38 +189,6 @@ describe("Linux Hopper application leases in the launcher", () => {
     expect(leaseChecks).toBe(3);
     expect(result.ok).toBe(false);
     expect(releases).toBe(1);
-  });
-
-  it("preserves the reason that an existing lease could not be verified", async () => {
-    const failure = new HopperStartError({
-      userMessage: "Existing owner timed out; the lease was left unchanged",
-    });
-    const launcher = new HopperApplicationLauncher(
-      {
-        environment: {},
-        launcherPath: "/unused/Hopper",
-        targetPath: "/target",
-        targetKind: "executable",
-        loaderArgs: [],
-        bridgeScriptPath: "/rea/hopper_bridge.py",
-        launchMode: "verified_linux_demo",
-        demoHelperPath: "/rea/helper.py",
-      },
-      {
-        platform: "linux",
-        acquireApplicationLease: async () => {
-          throw failure;
-        },
-      },
-    );
-    expect(
-      await launcher.launch({
-        directory: "/missing/rea-launch",
-        socketPath: "/missing/rea-launch/bridge.sock",
-        token: "token",
-        runId: "new-session",
-      }),
-    ).toEqual({ ok: false, error: failure });
   });
 });
 

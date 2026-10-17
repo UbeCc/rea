@@ -31,7 +31,14 @@ import {
   acquireLinuxHopperApplicationLease,
   acquireMacHopperApplicationLease,
 } from "../process/HopperLease.js";
-import type { HopperTargetLease } from "../process/HopperLease.js";
+import type {
+  HopperTargetLease,
+  HopperTargetLeaseAcquisition,
+} from "../process/HopperLease.js";
+import {
+  enterLinuxHopperQueue,
+  type HopperQueueTicket,
+} from "../process/HopperQueue.js";
 import { HOPPER_SHUTDOWN_TIMEOUT_MS } from "./HopperSessionValues.js";
 import { verifyMacHopperNativeHelper } from "./HopperMacPublisher.js";
 import { inspectLinuxHopperLauncher } from "../application/LinuxHopper.js";
@@ -128,6 +135,10 @@ export interface HopperApplicationLauncherDependencies {
   }) => ReturnType<typeof acquireMacHopperApplicationLease>;
   /** Wait for a competing session before reporting its owner. */
   readonly applicationLeaseWaitMs?: number;
+  /** FIFO queue shared by processes waiting for a Linux application slot. */
+  readonly enterApplicationQueue?: (input: {
+    readonly runId: string;
+  }) => Promise<HopperQueueTicket>;
   readonly selectPrivateDisplay?: (options: {
     readonly environment: Readonly<NodeJS.ProcessEnv>;
     readonly helperPath: string;
@@ -390,28 +401,31 @@ export class HopperApplicationLauncher implements BridgeLauncher {
     const waitMs =
       this.dependencies.applicationLeaseWaitMs ??
       HOPPER_APPLICATION_LEASE_WAIT_MS;
-    const waitStarted = Date.now();
+    // Waiters for the real Linux slot store queue FIFO across processes, so
+    // a newcomer cannot overtake a session that is already waiting.
+    const enterQueue =
+      this.dependencies.enterApplicationQueue ??
+      (linuxDemo && this.dependencies.acquireApplicationLease === undefined
+        ? enterLinuxHopperQueue
+        : undefined);
     try {
-      for (;;) {
-        const acquisition = await acquire({ runId });
-        if (acquisition.acquired) return ok(acquisition.lease);
-        const remaining = waitMs - (Date.now() - waitStarted);
-        if (remaining <= 0)
-          return err(
-            this.#applicationBusy(
-              acquisition.owner,
+      const waited = await waitForApplicationSlot({
+        acquire,
+        enterQueue,
+        runId,
+        waitMs,
+        signal,
+      });
+      if (waited.ok) return ok(waited.value);
+      return err(
+        waited.error === "cancelled"
+          ? new HopperCancelledError()
+          : this.#applicationBusy(
+              waited.error.owner,
               linuxDemo,
-              Date.now() - waitStarted,
+              waited.error.waitedMs,
             ),
-          );
-        if (
-          (await waitForAbortableDelay(
-            Math.min(HOPPER_APPLICATION_LEASE_POLL_MS, remaining),
-            signal,
-          )) === "aborted"
-        )
-          return err(new HopperCancelledError());
-      }
+      );
     } catch (cause: unknown) {
       return err(
         cause instanceof HopperStartError
@@ -541,6 +555,64 @@ const launchHopperProcess = async (input: {
       ...(input.signal === undefined ? {} : { signal: input.signal }),
     });
   return spawn(input.argumentsForTarget);
+};
+
+type ApplicationLeaseAcquire = (input: {
+  readonly runId: string;
+}) => Promise<HopperTargetLeaseAcquisition>;
+
+/**
+ * Poll for an application slot until `waitMs` elapses. With a queue ticket,
+ * only the oldest live waiter polls; at the deadline every waiter tries once
+ * so a busy result can name a current owner.
+ */
+const waitForApplicationSlot = async (input: {
+  readonly acquire: ApplicationLeaseAcquire;
+  readonly enterQueue:
+    | ((input: { readonly runId: string }) => Promise<HopperQueueTicket>)
+    | undefined;
+  readonly runId: string;
+  readonly waitMs: number;
+  readonly signal: AbortSignal | undefined;
+}): Promise<
+  Result<
+    HopperTargetLease,
+    | "cancelled"
+    | {
+        readonly owner: { readonly runId: string; readonly processId: number };
+        readonly waitedMs: number;
+      }
+  >
+> => {
+  const started = Date.now();
+  const ticket = await input.enterQueue?.({ runId: input.runId });
+  try {
+    for (;;) {
+      const remaining = input.waitMs - (Date.now() - started);
+      const mayTry =
+        ticket === undefined || remaining <= 0 || (await ticket.isHead());
+      if (mayTry) {
+        const acquisition = await input.acquire({ runId: input.runId });
+        if (acquisition.acquired) return ok(acquisition.lease);
+        if (remaining <= 0)
+          return err({
+            owner: acquisition.owner,
+            waitedMs: Date.now() - started,
+          });
+      }
+      if (
+        (await waitForAbortableDelay(
+          Math.min(HOPPER_APPLICATION_LEASE_POLL_MS, remaining),
+          input.signal,
+        )) === "aborted"
+      )
+        return err("cancelled");
+    }
+  } finally {
+    // An unclosed ticket is unreferenced and ends with this process; later
+    // waiters skip it once it refuses connections.
+    await ticket?.leave().catch(() => undefined);
+  }
 };
 
 export const linuxDemoLaunch = (
