@@ -586,9 +586,23 @@ reused across files. Sources start in inventory order and execute concurrently,
 but results are admitted and adopted in inventory order: a source that finished
 early waits for its turn, then applies the sequential node and result-capacity
 offers. If its speculative offer could have changed the outcome, REA analyzes
-that source again with the exact offer. The worker count therefore does not
-change retained facts, except through the live parent-heap check that
-sequential admission also applies. The analyzer defaults to 1024 MiB of V8 old-space and a 300000 ms
+that source again with the exact offer. The parent result budget is derived
+from the configured heap limit (rounded down to 64 MiB) minus a fixed reserve,
+not from the live heap, so the worker count and repeated runs do not change
+which files keep their semantic graph. A live parent-heap headroom check still
+runs after that decision; when it alone drops a graph, the resource-limit
+message says "live heap headroom" because that outcome depends on current
+memory use.
+
+Scaling ceiling: complete Evidence for a large frontend is hundreds of
+megabytes (Typora's 30-source frontend: 232 MB, 97 % semantic graph). The CLI
+streams that Evidence to stdout or `--evidence-out` without building one
+string, and MCP returns a retained-Evidence reference when a response exceeds
+the stdio budget, so the default complete contract stays available. For agent
+use select `--detail summary` (MCP `detail: "summary"`), which prints about
+40 KB and pages the retained file. Worker scaling flattens near 16 workers:
+the largest sources bound the parallel phase and semantic-graph sealing plus
+Evidence hashing run serially after it, including under summary detail. The analyzer defaults to 1024 MiB of V8 old-space and a 300000 ms
 deadline per source, including startup and fact transfer. Select
 `max_heap_mb` and `analysis_timeout_ms` through MCP, or `--max-heap-mb` and
 `--analysis-timeout-ms` on the dedicated CLI command. These choices control the

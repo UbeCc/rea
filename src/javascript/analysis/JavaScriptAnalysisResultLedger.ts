@@ -4,12 +4,19 @@ import { JAVASCRIPT_ANALYSIS_TRANSFER_RECORD_BYTES } from "./JavaScriptAnalysisT
 /** Fixed allowance for the parent's own code, schemas and Evidence work. */
 export const JAVASCRIPT_PARENT_BASELINE_RESERVE_BYTES = 128 * 1024 * 1024;
 
+/**
+ * V8 reports a heap limit that varies by up to a few hundred KiB between
+ * processes with the same configuration; round it down to this granularity.
+ */
+export const JAVASCRIPT_HEAP_LIMIT_GRANULARITY_BYTES = 64 * 1024 * 1024;
+
 /** Deterministic parent result budget for a configured heap limit. */
 export const javaScriptParentResultBudgetBytes = (heapSizeLimit: number) =>
   Math.max(
     0,
     Math.floor(
-      (heapSizeLimit -
+      (Math.floor(heapSizeLimit / JAVASCRIPT_HEAP_LIMIT_GRANULARITY_BYTES) *
+        JAVASCRIPT_HEAP_LIMIT_GRANULARITY_BYTES -
         JAVASCRIPT_PARENT_BASELINE_RESERVE_BYTES -
         24 * JAVASCRIPT_ANALYSIS_TRANSFER_RECORD_BYTES) /
         2,

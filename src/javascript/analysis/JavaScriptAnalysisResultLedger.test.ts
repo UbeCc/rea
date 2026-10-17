@@ -37,3 +37,10 @@ it("reserves a fixed baseline below half of the configured heap", () => {
   );
   expect(javaScriptParentResultBudgetBytes(0)).toBe(0);
 });
+
+it("ignores small run-to-run variation of the reported heap limit", () => {
+  const heap = 4 * 1024 * 1024 * 1024 + 200 * 1024 * 1024;
+  expect(javaScriptParentResultBudgetBytes(heap + 81_656)).toBe(
+    javaScriptParentResultBudgetBytes(heap + 200_088),
+  );
+});
