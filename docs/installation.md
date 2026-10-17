@@ -684,7 +684,9 @@ The macOS Hopper demo ends each application session after about 30 minutes
 with a modal `Demo period has expired.` alert. Because REA reuses the running
 Hopper application, later calls then wait on that alert instead of failing.
 When a Hopper call is still pending after 30 seconds and the application has
-run for at least 30 minutes, REA logs a warning on stderr naming this cause.
+run for at least 30 minutes, REA logs a warning naming this cause. The MCP
+server logs it to stderr; the CLI logs it when `REA_LOG_LEVEL` is `warn` or
+more verbose.
 REA cannot read the license kind, so licensed users can ignore the warning.
 Dismiss the alert or quit Hopper (for example
 `pkill -x 'Hopper Disassembler'`); the next REA call relaunches it. On Linux,
