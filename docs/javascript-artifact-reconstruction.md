@@ -561,9 +561,19 @@ smaller view, for example `--format json --filter-output
 evidence_id,normalized_result.statistics`. Streaming output does not bound the
 memory needed to construct the analysis graph itself.
 
-JavaScript source parsing, static analysis and semantic projection run in one
-owned analysis process, reused sequentially across files. Target code is never
-executed. The analyzer defaults to 1024 MiB of V8 old-space and a 300000 ms
+JavaScript source parsing, static analysis and semantic projection run in
+owned analysis processes. Target code is never executed. By default, REA starts
+up to one worker per available core minus one, at most 16, at most one per
+selected JavaScript source, and no more than fit half of physical memory at
+`max_heap_mb` plus 256 MiB each. Select `max_analysis_workers` (CLI:
+`--max-analysis-workers`, 1 to 64) to cap or raise that count. Each worker is
+reused across files. Sources start in inventory order and execute concurrently,
+but results are admitted and adopted in inventory order: a source that finished
+early waits for its turn, then applies the sequential node and result-capacity
+offers. If its speculative offer could have changed the outcome, REA analyzes
+that source again with the exact offer. The worker count therefore does not
+change retained facts, except through the live parent-heap check that
+sequential admission also applies. The analyzer defaults to 1024 MiB of V8 old-space and a 300000 ms
 deadline per source, including startup and fact transfer. Select
 `max_heap_mb` and `analysis_timeout_ms` through MCP, or `--max-heap-mb` and
 `--analysis-timeout-ms` on the dedicated CLI command. These choices control the
@@ -586,10 +596,12 @@ not bypass worker heap, execution deadline or parent result admission. Truncated
 coverage reports both effective node ceilings; omitted relationships remain
 unknown.
 
-While sources remain, the sequential worker reserves one next compact static
+While sources remain, admission in inventory order reserves one next compact static
 checkpoint at its 8 MiB bound with the same 6x retention expansion used at
 admission. Earlier checkpoints are already charged to retained bytes; the
-remaining inventory does not multiply the reserve. Streamed file transfers keep the default 512 MiB
+remaining inventory does not multiply the reserve. A source that starts ahead
+of its turn receives a speculative offer that also reserves every other started
+source's checkpoint. Streamed file transfers keep the default 512 MiB
 allowance, and can grow with the parent's offered retention budget (8x byte
 expansion), up to 2 GiB. Individual records remain bounded to 8 MiB. The parent
 still independently checks actual bytes, record overhead, digests and source

@@ -167,6 +167,10 @@ export const buildJavaScriptSemanticGraph = ({
 export interface JavaScriptSemanticGraphProjection {
   /** Node capacity offered to the next independently analyzed source file. */
   readonly remainingFileNodeBudget: () => number;
+  /** Nodes this file-local projection would add to the retained tree. */
+  readonly newNodeCount: (
+    projection: JavaScriptSemanticFileProjection,
+  ) => number;
   /** Adopt decoded file-local facts; final validation and proof remain in this realm. */
   readonly adoptFileProjection: (
     projection: JavaScriptSemanticFileProjection,
@@ -331,6 +335,11 @@ export const createJavaScriptSemanticGraphProjection = (
   return {
     remainingFileNodeBudget: () =>
       Math.min(fileNodeCeiling, Math.max(0, nodeCeiling - state.nodes.size)),
+    newNodeCount: (projection) =>
+      projection.nodes.reduce(
+        (count, { node_id }) => count + Number(!state.nodes.has(node_id)),
+        0,
+      ),
     adoptFileProjection: (projection) => {
       const newNodes = projection.nodes.filter(
         ({ node_id }) => !state.nodes.has(node_id),

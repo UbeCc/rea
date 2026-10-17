@@ -106,4 +106,7 @@ const parameters = (
   ...(input.analysis_timeout_ms === undefined
     ? {}
     : { analysis_timeout_ms: input.analysis_timeout_ms }),
+  ...(input.max_analysis_workers === undefined
+    ? {}
+    : { max_analysis_workers: input.max_analysis_workers }),
 });

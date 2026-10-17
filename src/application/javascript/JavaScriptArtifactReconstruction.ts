@@ -164,6 +164,7 @@ export const reconstructJavaScriptArtifact = async (
         files.files.filter(
           (file) => file.kind === "javascript" && file.text.included,
         ).length,
+        input.max_analysis_workers,
       );
       let outcome;
       let cleanupFailure: AnalysisError | undefined;
