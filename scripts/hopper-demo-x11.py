@@ -596,23 +596,23 @@ def mount_private_x11() -> None:
         )
 
 
-def private_directory(session: Path, name: str) -> Path:
-    """Create one owner-only directory for one Hopper application."""
-    directory = session / name
+def private_tmpdir(session: Path) -> Path:
+    """Create the owner-only temporary directory for one Hopper application."""
+    directory = session / "hopper-tmp"
     try:
         directory.mkdir(mode=0o700)
         info = directory.lstat()
     except OSError as error:
         raise AdapterFailure(
             INVALID_LAUNCH_COMMAND,
-            "private_directory_unavailable",
-            "private Hopper directory unavailable",
+            "private_tmpdir_unavailable",
+            "private Hopper TMPDIR unavailable",
         ) from error
     if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid():
         raise AdapterFailure(
             INVALID_LAUNCH_COMMAND,
-            "private_directory_unavailable",
-            "private Hopper directory is not owned by this user",
+            "private_tmpdir_unavailable",
+            "private Hopper TMPDIR is not owned by this user",
         )
     return directory
 
@@ -873,14 +873,7 @@ def run_launch(args: argparse.Namespace) -> int:
                 # Hopper's single-instance lock file and forwarding socket
                 # live in TMPDIR; a private one keeps each owned application
                 # from forwarding into, or receiving, another session's launch.
-                "TMPDIR": str(private_directory(socket.parent, "hopper-tmp")),
-                # Hopper rewrites $XDG_CONFIG_HOME/hopper/Hopper.plist at
-                # startup; a private one keeps concurrent applications from
-                # racing on the user's preferences. Plugins stay in the
-                # shared, read-only XDG data directory.
-                "XDG_CONFIG_HOME": str(
-                    private_directory(socket.parent, "hopper-config")
-                ),
+                "TMPDIR": str(private_tmpdir(socket.parent)),
                 "DISPLAY": display_name,
                 "XAUTHORITY": str(authority),
                 "GDK_BACKEND": "x11",

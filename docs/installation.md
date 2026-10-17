@@ -600,10 +600,11 @@ a later launch that finds that lock connects to the socket, forwards its
 arguments, and exits. REA gives every owned demo application a private
 owner-only `TMPDIR` inside its session runtime directory, so each application
 has its own lock and socket and never forwards into, or receives, another
-session's launch. Each application also gets a private
-`XDG_CONFIG_HOME`, because Hopper rewrites `hopper/Hopper.plist` there at
-startup; concurrent applications therefore never race on the user's
-preferences, while plugins remain in the shared XDG data directory. Cooperating REA processes share at most
+session's launch. Applications share `$HOME`: Hopper keeps preferences
+through GNUstep user defaults in `~/.config/hopper`, which serializes
+concurrent processes with its own `.lck` lock directory, and
+`~/.local/share/hopper` holds user plugins. In REA's headless sessions Hopper
+takes that lock but does not rewrite `Hopper.plist`. Cooperating REA processes share at most
 `REA_HOPPER_MAX_INSTANCES` concurrent Linux demo applications per user (default
 4, maximum 64). Each application uses about 200–300 MiB of memory plus the
 target's analysis state; lower the value on small hosts. When every slot is in
