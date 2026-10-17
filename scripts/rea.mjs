@@ -69,7 +69,7 @@ if (!(await compiledRuntimeExists(runtimeFiles))) {
   writeStdout(result.output);
   process.exitCode = result.exitCode;
 } else {
-  const { cliConfigurationError, createCli } =
+  const { cliConfigurationError, createCli, normalizeCliPositionalSelectors } =
     await import("../dist/cli-runtime/cli.js");
   const { createCliResultOutput } =
     await import("../dist/cli-runtime/cliResultOutput.js");
@@ -80,7 +80,9 @@ if (!(await compiledRuntimeExists(runtimeFiles))) {
     validateCliOutputArguments,
   } = await import("../dist/cli-runtime/cliOutput.js");
   guardClosedStdout();
-  const cliArgs = normalizeCliOutputArguments(args);
+  const cliArgs = normalizeCliPositionalSelectors(
+    normalizeCliOutputArguments(args),
+  );
   const outputArguments = validateCliOutputArguments(cliArgs);
   const configurationError = cliConfigurationError(process.env);
   if (configurationError !== undefined) {

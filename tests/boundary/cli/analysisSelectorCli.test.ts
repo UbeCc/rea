@@ -91,4 +91,25 @@ describe("CLI analysis selector boundaries", () => {
       }
     },
   );
+
+  cliTest(
+    "binds positional Objective-C method names to the named selector",
+    async ({ cli }) => {
+      for (const [command] of selectors.filter(
+        ([, option]) => option === "procedure" || option === "address",
+      )) {
+        const result = await cli.run({
+          arguments: [
+            command,
+            "does-not-exist",
+            "-[QuickOpenCommands buildPredicateQueryFrom:]",
+            "--json",
+          ],
+          environment: { REA_LOG_LEVEL: "silent" },
+        });
+        expect(result.stdout).not.toContain("Unknown flag");
+        expect(result.json).toMatchObject({ code: "target_unavailable" });
+      }
+    },
+  );
 });

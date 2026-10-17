@@ -52,6 +52,8 @@ import {
 import { registerReverseEngineeringCommands } from "./cli/reverseEngineeringCommands.js";
 import { registerCutterCommands } from "./cli/cutterCommands.js";
 
+export { normalizeCliPositionalSelectors } from "./cli/positionalSelectorArguments.js";
+
 /** Describe CLI settings that are invalid before any command runs, as MCP does. */
 export const cliConfigurationError = (
   selectedEnvironment: Readonly<Record<string, string | undefined>>,

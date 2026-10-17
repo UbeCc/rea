@@ -17,6 +17,19 @@ import { javascriptApplicationOptions } from "../cliObservationOptions.js";
 import { AnalysisInputError } from "../domain/analysisErrorCore.js";
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
 
+/**
+ * Named options that mirror each command's positional selector. Incur reads
+ * every token beginning with `-` as a flag, so Objective-C instance method
+ * names such as `-[Class selector:]` need the named form.
+ */
+export const POSITIONAL_SELECTOR_OPTIONS: Readonly<Record<string, string>> =
+  Object.freeze({
+    [CLI_COMMANDS.decompile]: "procedure",
+    [CLI_COMMANDS.function]: "procedure",
+    [CLI_COMMANDS.instructions]: "procedure",
+    [CLI_COMMANDS.xrefs]: "address",
+  });
+
 /** Register provider-neutral binary overview and procedure CLI commands. */
 export const registerCoreBinaryCommands = (
   cli: CliInstance,

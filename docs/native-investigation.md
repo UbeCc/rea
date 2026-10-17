@@ -39,8 +39,12 @@ that begin with a dash, including Objective-C names such as
 `rea function ./app '--procedure=-[REAWidget delegate]' --provider hopper --format json`.
 Use the equals form when the value resembles a CLI flag, for example
 `rea trace ./app --query=--help --provider hopper --format json`.
-The existing positional forms remain available. Missing selectors and conflicting
-positional/named values fail before analysis starts; identical selections agree.
+The positional forms remain available. A positional Objective-C instance
+method name, such as `rea decompile ./app '-[REAWidget delegate]'`, is bound to
+the command's named selector because its brackets and space cannot spell a
+flag; other values that begin with a dash still need the equals form. Missing
+selectors and conflicting positional/named values fail before analysis starts;
+identical selections agree.
 
 ## Native instruction, call and type primitives
 
