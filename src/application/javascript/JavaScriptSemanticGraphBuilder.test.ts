@@ -1060,7 +1060,7 @@ it("projects and adopts more than the default per-file capacity when explicitly 
     totalNodes: 20_010,
     fileNodes: 20_002,
   });
-  projection.adoptFileProjection(result.value);
+  projection.adoptFileProjection(result.value, "main.js");
   expect(projection.remainingFileNodeBudget()).toBe(8);
   const graph = projection.finish(SHA256, {
     graph_id: `jag_${"b".repeat(64)}`,
@@ -1075,7 +1075,7 @@ it("projects and adopts more than the default per-file capacity when explicitly 
     totalNodes: 20_001,
     fileNodes: 20_002,
   });
-  expect(() => bounded.adoptFileProjection(result.value)).toThrow(
+  expect(() => bounded.adoptFileProjection(result.value, "main.js")).toThrow(
     "exceed the offered tree capacity",
   );
 });

@@ -38,7 +38,10 @@ import { javascriptArtifactAnalysisScopes } from "./JavaScriptArtifactAnalysisTy
 import { analyzeJavaScriptJsonModule } from "./JavaScriptJsonModules.js";
 import { completeJavaScriptAnalysisSteps } from "./JavaScriptAnalysisControl.js";
 import { htmlArtifactReferences } from "../../domain/javascript/htmlArtifactReferences.js";
-import type { JavaScriptSourceAnalysisPort } from "../../domain/javascript/javascriptSourceAnalysis.js";
+import type {
+  JavaScriptSourceAdmissionTurn,
+  JavaScriptSourceAnalysisPort,
+} from "../../domain/javascript/javascriptSourceAnalysis.js";
 import type { JavaScriptSemanticGraphProjection } from "./JavaScriptSemanticGraphBuilder.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
@@ -126,7 +129,7 @@ export const analyzeAndProjectJavaScriptArtifactFiles = async (
 /** Analyze sources behind a hard heap boundary, retaining collected facts on interruption. */
 export const analyzeAndAdoptJavaScriptArtifactFiles = async (
   fileSet: JavaScriptArtifactFileSet,
-  worker: Pick<JavaScriptSourceAnalysisPort, "analyze">,
+  worker: Pick<JavaScriptSourceAnalysisPort, "analyze" | "concurrency">,
   projection: JavaScriptSemanticGraphProjection,
   beforeFile: (
     file: JavaScriptArtifactFile,
@@ -143,141 +146,144 @@ export const analyzeAndAdoptJavaScriptArtifactFiles = async (
   const selectedFileCount =
     fileSet.files.length - (fileSet.source_selection?.unselected_files ?? 0);
   let selectedFileIndex = 0;
-  for (const file of fileSet.files) {
-    let analysisStarted = false;
-    try {
-      await setImmediate();
-      if (classifyOutsideAnalysisScope(file, state, projection)) {
-        if (signal?.aborted === true) {
-          interruption = new AnalysisCancelledError(
-            "analyze_javascript_application",
-          );
-          break;
+  const sources = scheduleSourceAnalyses(fileSet, worker, projection, signal);
+  try {
+    for (const file of fileSet.files) {
+      let analysisStarted = false;
+      try {
+        await setImmediate();
+        if (classifyOutsideAnalysisScope(file, state, projection)) {
+          if (signal?.aborted === true) {
+            interruption = new AnalysisCancelledError(
+              "analyze_javascript_application",
+            );
+            break;
+          }
+          continue;
         }
-        continue;
-      }
-      if (signal?.aborted === true)
-        throw new AnalysisCancelledError("analyze_javascript_application");
-      await beforeFile(file, selectedFileIndex++, selectedFileCount);
-      analysisStarted = true;
-      if (file.kind !== "javascript" || !file.text.included) {
-        const steps = analyzeArtifactFileSteps(file, {
-          state,
-          projectSemantics: function* (_file, ir) {
-            yield;
-            return projectJavaScriptModuleSemantics(ir);
-          },
-        });
-        await completeJavaScriptAnalysisSteps(steps, signal);
-        continue;
-      }
-      const result = await worker.analyze(
-        file,
-        projection.remainingFileNodeBudget(),
-        signal,
-      );
-      const facts = result.ok ? result.value : result.error;
-      const applicationProjectionFailure = facts.applicationProjectionFailure;
-      if (facts.projection !== null)
-        projection.adoptFileProjection(facts.projection);
-      const error = result.ok ? null : result.error.error;
-      const limits =
-        error instanceof AnalysisResourceConstraintError
-          ? error.reportedLimits
-          : error instanceof AnalysisTimeoutError
-            ? { worker_timeout_ms: error.timeoutMs }
-            : null;
-      const failure: JavaScriptArtifactAnalysisFailure | undefined =
-        error === null
-          ? undefined
-          : {
-              scope: javascriptArtifactAnalysisScopes.javascript,
-              status: "interrupted",
-              reason: `${file.path}: ${error.message}`,
-              error: projectAnalysisError(error),
-              limits,
-            };
-      state.files.push({
-        file,
-        javascript: facts.javascript,
-        semantic: facts.module === null ? null : { ir: facts.module },
-        ...(failure === undefined ? {} : { analysis_failure: failure }),
-        ...(applicationProjectionFailure === undefined
-          ? {}
-          : {
-              application_projection_failure: {
-                reason: applicationProjectionFailure.message,
-                error: projectAnalysisError(applicationProjectionFailure),
-                limits: applicationProjectionFailure.reportedLimits,
-              },
-            }),
-      });
-      if (failure !== undefined && facts.projection === null)
-        projection.recordUnavailableFile(
-          file,
-          failure.reason,
-          failure.limits,
-          error instanceof AnalysisResourceConstraintError ||
-            error instanceof AnalysisTimeoutError
-            ? "resource-limit"
-            : "incomplete-module",
-        );
-      if (facts.javascript !== null) {
-        state.visitedNodes += facts.javascript.visited_ast_nodes;
-        state.findings +=
-          findingCount(facts.javascript) +
-          (facts.module?.moduleLinks.length ?? 0);
-        state.modules += facts.javascript.bundler_registrations.reduce(
-          (count, item) => count + item.modules.length,
-          0,
-        );
-        if (facts.javascript.parse_status === "failed")
-          state.parseFailures += 1;
-      }
-      if (
-        error !== null &&
-        (!(error instanceof AnalysisResourceConstraintError) ||
-          error.reportedLimits?.parent_result_budget_exhausted === true)
-      ) {
-        interruption = error;
-        break;
-      }
-    } catch (cause: unknown) {
-      if (signal?.aborted !== true && !(cause instanceof AnalysisError))
-        throw cause;
-      interruption =
-        signal?.aborted === true
-          ? new AnalysisCancelledError("analyze_javascript_application")
-          : cause instanceof AnalysisError
-            ? cause
-            : null;
-      if (interruption !== null) {
-        const scope = javascriptArtifactAnalysisScopes[file.kind];
+        if (signal?.aborted === true)
+          throw new AnalysisCancelledError("analyze_javascript_application");
+        await beforeFile(file, selectedFileIndex++, selectedFileCount);
+        analysisStarted = true;
+        if (file.kind !== "javascript" || !file.text.included) {
+          const steps = analyzeArtifactFileSteps(file, {
+            state,
+            projectSemantics: function* (_file, ir) {
+              yield;
+              return projectJavaScriptModuleSemantics(ir);
+            },
+          });
+          await completeJavaScriptAnalysisSteps(steps, signal);
+          continue;
+        }
+        const result = await sources.take(file);
+        const facts = result.ok ? result.value : result.error;
+        const applicationProjectionFailure = facts.applicationProjectionFailure;
+        if (facts.projection !== null)
+          projection.adoptFileProjection(facts.projection, file.path);
+        const error = result.ok ? null : result.error.error;
+        const limits =
+          error instanceof AnalysisResourceConstraintError
+            ? error.reportedLimits
+            : error instanceof AnalysisTimeoutError
+              ? { worker_timeout_ms: error.timeoutMs }
+              : null;
+        const failure: JavaScriptArtifactAnalysisFailure | undefined =
+          error === null
+            ? undefined
+            : {
+                scope: javascriptArtifactAnalysisScopes.javascript,
+                status: "interrupted",
+                reason: `${file.path}: ${error.message}`,
+                error: projectAnalysisError(error),
+                limits,
+              };
         state.files.push({
           file,
-          javascript: null,
-          semantic: null,
-          ...(scope === null
+          javascript: facts.javascript,
+          semantic: facts.module === null ? null : { ir: facts.module },
+          ...(failure === undefined ? {} : { analysis_failure: failure }),
+          ...(applicationProjectionFailure === undefined
             ? {}
             : {
-                analysis_failure: {
-                  scope,
-                  status: analysisStarted ? "interrupted" : "not-started",
-                  reason: `${file.path}: ${interruption.message}`,
-                  error: projectAnalysisError(interruption),
-                  limits: null,
+                application_projection_failure: {
+                  reason: applicationProjectionFailure.message,
+                  error: projectAnalysisError(applicationProjectionFailure),
+                  limits: applicationProjectionFailure.reportedLimits,
                 },
               }),
         });
-        projection.recordUnavailableFile(
-          file,
-          interruption.message,
-          null,
-          "incomplete-module",
-        );
+        if (failure !== undefined && facts.projection === null)
+          projection.recordUnavailableFile(
+            file,
+            failure.reason,
+            failure.limits,
+            error instanceof AnalysisResourceConstraintError ||
+              error instanceof AnalysisTimeoutError
+              ? "resource-limit"
+              : "incomplete-module",
+          );
+        if (facts.javascript !== null) {
+          state.visitedNodes += facts.javascript.visited_ast_nodes;
+          state.findings +=
+            findingCount(facts.javascript) +
+            (facts.module?.moduleLinks.length ?? 0);
+          state.modules += facts.javascript.bundler_registrations.reduce(
+            (count, item) => count + item.modules.length,
+            0,
+          );
+          if (facts.javascript.parse_status === "failed")
+            state.parseFailures += 1;
+        }
+        if (
+          error !== null &&
+          (!(error instanceof AnalysisResourceConstraintError) ||
+            error.reportedLimits?.parent_result_budget_exhausted === true)
+        ) {
+          interruption = error;
+          break;
+        }
+      } catch (cause: unknown) {
+        if (signal?.aborted !== true && !(cause instanceof AnalysisError))
+          throw cause;
+        interruption =
+          signal?.aborted === true
+            ? new AnalysisCancelledError("analyze_javascript_application")
+            : cause instanceof AnalysisError
+              ? cause
+              : null;
+        if (interruption !== null) {
+          const scope = javascriptArtifactAnalysisScopes[file.kind];
+          state.files.push({
+            file,
+            javascript: null,
+            semantic: null,
+            ...(scope === null
+              ? {}
+              : {
+                  analysis_failure: {
+                    scope,
+                    status: analysisStarted ? "interrupted" : "not-started",
+                    reason: `${file.path}: ${interruption.message}`,
+                    error: projectAnalysisError(interruption),
+                    limits: null,
+                  },
+                }),
+          });
+          projection.recordUnavailableFile(
+            file,
+            interruption.message,
+            null,
+            "incomplete-module",
+          );
+        }
+        break;
       }
-      break;
     }
+  } finally {
+    // Later speculative results are not adopted after an interruption; their
+    // owned analyses are cancelled and settled before cleanup.
+    await sources.settle();
   }
   if (interruption !== null) {
     const analyzedPaths = new Set(state.files.map(({ file }) => file.path));
@@ -324,6 +330,155 @@ export const analyzeAndAdoptJavaScriptArtifactFiles = async (
     }
   }
   return { analysis: finalizeArtifactAnalysis(state), interruption };
+};
+
+type SourceAnalysisResult = Awaited<
+  ReturnType<JavaScriptSourceAnalysisPort["analyze"]>
+>;
+
+interface ScheduledSourceAnalyses {
+  /** The result the sequential order would adopt for this file now. */
+  readonly take: (
+    file: JavaScriptArtifactFile,
+  ) => Promise<SourceAnalysisResult>;
+  /** Cancel unadopted analyses and wait until every started one settled. */
+  readonly settle: () => Promise<void>;
+}
+
+/**
+ * Start independent source analyses ahead of adoption while the caller adopts
+ * results in inventory order. Sources start in that order, so every source
+ * ahead of a waiting one has started and admission cannot deadlock.
+ *
+ * Execution overlaps, but admission does not: each source's result waits for
+ * its turn, which opens when the caller takes it after adopting every earlier
+ * source. The worker then applies the sequential result-capacity rules and
+ * repeats the source if its speculative semantic offer could have changed the
+ * outcome. The node offer is taken when a source starts; earlier adoptions can
+ * only lower it. If the in-order offer is lower and the result would not fit
+ * it unchanged, the source is analyzed again with the exact offer. The worker
+ * count therefore changes neither retained nodes nor admission decisions,
+ * except through the live parent-heap check that sequential admission also
+ * applies.
+ */
+const scheduleSourceAnalyses = (
+  fileSet: JavaScriptArtifactFileSet,
+  worker: Pick<JavaScriptSourceAnalysisPort, "analyze" | "concurrency">,
+  projection: JavaScriptSemanticGraphProjection,
+  signal: AbortSignal | undefined,
+): ScheduledSourceAnalyses => {
+  const concurrency = worker.concurrency ?? 1;
+  if (concurrency <= 1)
+    return {
+      take: (file) =>
+        worker.analyze(file, projection.remainingFileNodeBudget(), signal),
+      settle: () => Promise.resolve(),
+    };
+  const controller = new AbortController();
+  const abort = (): void => {
+    controller.abort();
+  };
+  signal?.addEventListener("abort", abort, { once: true });
+  if (signal?.aborted === true) abort();
+  type Outcome =
+    | {
+        readonly ok: true;
+        readonly result: SourceAnalysisResult;
+        readonly offered: number;
+      }
+    | { readonly ok: false; readonly cause: unknown };
+  interface Scheduled {
+    readonly file: JavaScriptArtifactFile;
+    readonly turn: JavaScriptSourceAdmissionTurn;
+    readonly open: () => void;
+    outcome?: Promise<Outcome>;
+  }
+  const sources = fileSet.files.filter(
+    (file) => file.kind === "javascript" && file.text.included,
+  );
+  const scheduled = new Map<JavaScriptArtifactFile, Scheduled>();
+  for (const [index, file] of sources.entries()) {
+    let open = (): void => {};
+    const opened = new Promise<void>((resolve) => {
+      open = resolve;
+    });
+    scheduled.set(file, {
+      file,
+      open,
+      turn: {
+        opened,
+        sourcesAfter: sources.length - index - 1,
+        current: false,
+      },
+    });
+  }
+  const queue = [...scheduled.values()];
+  const started = new Set<Promise<Outcome>>();
+  const start = (entry: Scheduled): Promise<Outcome> => {
+    const offered = projection.remainingFileNodeBudget();
+    const analysis = worker
+      .analyze(entry.file, offered, controller.signal, entry.turn)
+      .then(
+        (result): Outcome => ({ ok: true, result, offered }),
+        (cause: unknown): Outcome => ({ ok: false, cause }),
+      )
+      .finally(() => {
+        started.delete(analysis);
+        launch();
+      });
+    started.add(analysis);
+    entry.outcome = analysis;
+    return analysis;
+  };
+  const launch = (): void => {
+    while (started.size < concurrency && !controller.signal.aborted) {
+      const next = queue.shift();
+      if (next === undefined) return;
+      start(next);
+    }
+  };
+  launch();
+  return {
+    take: async (file) => {
+      const entry = scheduled.get(file);
+      if (entry === undefined)
+        return worker.analyze(
+          file,
+          projection.remainingFileNodeBudget(),
+          signal,
+        );
+      scheduled.delete(file);
+      const index = queue.indexOf(entry);
+      if (index >= 0) queue.splice(index, 1);
+      entry.open();
+      const outcome = await (entry.outcome ?? start(entry));
+      if (!outcome.ok) throw outcome.cause;
+      const facts = outcome.result.ok
+        ? outcome.result.value
+        : outcome.result.error;
+      const sequential = projection.remainingFileNodeBudget();
+      if (
+        outcome.offered === sequential ||
+        facts.projection === null ||
+        (!facts.projection.truncated &&
+          projection.newNodeCount(facts.projection) <= sequential)
+      )
+        return outcome.result;
+      return worker.analyze(file, sequential, signal, {
+        ...entry.turn,
+        current: true,
+      });
+    },
+    settle: async () => {
+      signal?.removeEventListener("abort", abort);
+      queue.length = 0;
+      scheduled.clear();
+      if (started.size === 0) return;
+      // Unadopted analyses are cancelled; only started ones own resources.
+      abort();
+      while (started.size > 0) await Promise.all(started);
+    },
+  };
 };
 
 const analyzeArtifactFiles = <SemanticIr extends JavaScriptModuleSemanticIr>(
@@ -695,6 +850,7 @@ const findingCount = (analysis: JavaScriptStaticAnalysis): number =>
   analysis.role_paths.length +
   analysis.source_map_urls.length +
   analysis.native_bridges.length +
+  analysis.vendor_libraries.length +
   analysis.bundler_registrations.length +
   analysis.electron.browser_windows.length +
   analysis.electron.context_bridge_apis.length +

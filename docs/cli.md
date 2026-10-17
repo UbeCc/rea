@@ -21,17 +21,34 @@ files when neither `--provider` nor `--snapshot` is supplied. See
 for results, integrity checks and coverage.
 
 The complete application Evidence can be hundreds of megabytes for a real
-application. When an agent or a person reads the result, save it to a file and
-project a summary, a module page or one module from the saved Evidence:
+application. When an agent or a person reads the result, select summary
+detail. REA writes the complete Evidence atomically to a file and prints only
+its summary view plus the retained path and Evidence ID. Later views read that
+file by Evidence ID or path without repeating the analysis:
 
 ```bash
-rea analyze-javascript-application /absolute/path/to/app --json > app-evidence.json
+rea analyze-javascript-application /absolute/path/to/app --detail summary --json
+rea inspect-analysis-view --evidence ev_<id> \
+  --view '{"kind":"javascript","collection":"modules","projection":"references","offset":0,"limit":64}'
+rea inspect-analysis-view --evidence /absolute/path/app-evidence.json \
+  --view '{"kind":"javascript-facts","where":{"paths":["package.json"]},"property_keys":["name"]}'
+```
+
+Without `--evidence-out PATH`, the complete Evidence is retained as
+`<evidence_id>.json` in `$REA_EVIDENCE_DIR`, or in `rea-evidence` under the
+temporary directory. `--evidence-out` with the default complete detail also
+writes the file while still printing the complete Evidence. `--view` defaults
+to `{"kind":"summary"}`. Each view re-reads and authenticates the complete
+file, so its cost grows with the Evidence size (about 10 s for 230 MB). The
+older wrapped request remains supported:
+
+```bash
 jq -c '{source: {kind: "inline", evidence: .}, view: {kind: "summary"}}' app-evidence.json > app-view.json
 rea inspect-analysis-view app-view.json
 ```
 
-For example, a 334 MB Obsidian application Evidence file yields a summary view
-of about 10 KB. Replace the view with
+For example, a 230 MB Typora frontend Evidence file yields a summary view of
+about 40 KB. Replace the view with
 `{"kind": "page", "collection": "modules", "offset": 0, "limit": 32}` for a
 module page. See
 [JavaScript application workflows](javascript-application-workflows.md) for

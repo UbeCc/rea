@@ -36,6 +36,7 @@ export const failedJavaScriptStaticAnalysis = (): JavaScriptStaticAnalysis => ({
   role_paths: [],
   source_map_urls: [],
   vendors: [],
+  vendor_libraries: [],
   electron: {
     browser_windows: [],
     context_bridge_apis: [],

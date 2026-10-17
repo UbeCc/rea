@@ -287,8 +287,17 @@ const registerJavaScriptApplicationCommand = (
               ...(options.analysisTimeoutMs === undefined
                 ? {}
                 : { analysis_timeout_ms: options.analysisTimeoutMs }),
+              ...(options.maxAnalysisWorkers === undefined
+                ? {}
+                : { max_analysis_workers: options.maxAnalysisWorkers }),
             },
             signal,
+            {
+              detail: options.detail,
+              ...(options.evidenceOut === undefined
+                ? {}
+                : { evidenceOut: options.evidenceOut }),
+            },
           ),
         ),
       ),

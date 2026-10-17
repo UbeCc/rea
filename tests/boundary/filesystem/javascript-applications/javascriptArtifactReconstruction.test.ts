@@ -228,7 +228,7 @@ it("preserves graph commitments and export shapes when consuming file-local IR",
       );
       expect(decoded.module).toEqual(module);
       decodedModules.set(analyzed.file.path, decoded.module);
-      transferred.adoptFileProjection(decoded.projection);
+      transferred.adoptFileProjection(decoded.projection, analyzed.file.path);
       if (!rejectedInvalidTransfer) {
         await rejectInvalidTransfer(
           wirePath,

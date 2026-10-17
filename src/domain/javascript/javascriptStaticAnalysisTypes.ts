@@ -37,7 +37,16 @@ interface JavaScriptStaticReferenceState {
 export type JavaScriptStaticReference = JavaScriptStaticReferenceState &
   (
     | { readonly specifier: string; readonly expression: null }
-    | { readonly specifier: null; readonly expression: string }
+    | {
+        readonly specifier: null;
+        readonly expression: string;
+        /**
+         * Literal URL passed to a proven browser `Worker`, `SharedWorker`, or
+         * `navigator.serviceWorker.register`. Browsers resolve it against the
+         * loading document's base URL, which this source alone does not name.
+         */
+        readonly document_url?: string;
+      }
   );
 
 /** A route or network endpoint literal observed in syntax. */
@@ -79,7 +88,7 @@ interface JavaScriptBundlerModuleState {
   readonly location: JavaScriptSourceRange;
 }
 
-/** One exact module factory recovered from a Webpack/Rspack registration. */
+/** One exact module factory recovered from a bundler or SystemJS registration. */
 export interface JavaScriptBundlerModule extends JavaScriptBundlerModuleState {
   readonly structural_fingerprint_sha256: string;
   readonly structural_fingerprint_algorithm: typeof JAVASCRIPT_AST_FINGERPRINT_ALGORITHM;
@@ -87,7 +96,7 @@ export interface JavaScriptBundlerModule extends JavaScriptBundlerModuleState {
 
 /** One statically recognized bundler chunk or module registration. */
 export interface JavaScriptBundlerRegistration {
-  readonly bundler: "webpack" | "rspack" | "esbuild";
+  readonly bundler: "webpack" | "rspack" | "esbuild" | "systemjs";
   readonly runtime: string;
   readonly chunk_keys: readonly string[];
   readonly unknown_chunk_keys: number;
@@ -121,12 +130,16 @@ export type JavaScriptNativeBridgeKind =
 /**
  * A statically spelled call into a WebView-to-native message bridge. The
  * receiver is matched by spelling only: `*.webkit.messageHandlers.NAME.postMessage`
- * or a `callHandler`/`registerHandler` member call as used by
+ * or a `callHandler`/`callSync`/`registerHandler` member call as used by
  * WebViewJavascriptBridge-style libraries. Neither proves the embedder.
  */
 export type JavaScriptNativeBridgeCall = {
   readonly bridge: JavaScriptNativeBridgeKind;
-  readonly operation: "post-message" | "call-handler" | "register-handler";
+  readonly operation:
+    | "post-message"
+    | "call-handler"
+    | "call-sync"
+    | "register-handler";
   readonly mechanism: string;
   readonly module_key: string | null;
   /** Recovered factory runtime; absent in older or unbundled findings. */
@@ -136,6 +149,30 @@ export type JavaScriptNativeBridgeCall = {
   | { readonly channel: string; readonly channel_expression: null }
   | { readonly channel: null; readonly channel_expression: string }
 );
+
+/** Confidence in an inferred embedded-library identification. */
+export type JavaScriptVendorLibraryConfidence = "high" | "medium" | "low";
+
+/**
+ * A third-party library inferred to be embedded in this source, from a
+ * preserved banner comment or a characteristic API shape. The version is the
+ * literal text at that site; null means it was not a literal and is unknown.
+ */
+export interface JavaScriptVendorLibrary {
+  readonly name: string;
+  readonly version: string | null;
+  readonly signal:
+    | "banner-comment"
+    | "object-keys"
+    | "member-writes"
+    | "member-names";
+  readonly mechanism: string;
+  readonly confidence: JavaScriptVendorLibraryConfidence;
+  readonly module_key: string | null;
+  /** Recovered factory runtime; absent in unbundled findings. */
+  readonly module_runtime?: string;
+  readonly location: JavaScriptSourceRange;
+}
 
 /** Deterministic AST-only analysis of one JavaScript source file. */
 export interface JavaScriptStaticAnalysis {
@@ -151,7 +188,10 @@ export interface JavaScriptStaticAnalysis {
     readonly declared_url: string;
     readonly location: JavaScriptSourceRange;
   }[];
+  /** Bundler and framework marker strings. */
   readonly vendors: readonly string[];
+  /** Embedded libraries inferred from banners and characteristic API shapes. */
+  readonly vendor_libraries: readonly JavaScriptVendorLibrary[];
   readonly electron: ElectronStaticFindings;
   readonly native_bridges: readonly JavaScriptNativeBridgeCall[];
   readonly limitations: readonly string[];

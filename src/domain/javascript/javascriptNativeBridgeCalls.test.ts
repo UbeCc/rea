@@ -11,6 +11,8 @@ it("records WebKit message handlers and WebViewJavascriptBridge channels with li
     o.callHandler(\`clipboard.write\`, payload);
     window.bridge.callHandler(channel, payload);
     bridge.registerHandler("eval", function (data, respond) {});
+    bridge.callSync("path.readText", path);
+    window.bridge.callSync(syncChannel);
   `);
   expect(
     analysis.native_bridges.map(
@@ -72,6 +74,20 @@ it("records WebKit message handlers and WebViewJavascriptBridge channels with li
       null,
       "call:bridge.registerHandler",
     ],
+    [
+      "webview-javascript-bridge",
+      "call-sync",
+      "path.readText",
+      null,
+      "call:bridge.callSync",
+    ],
+    [
+      "webview-javascript-bridge",
+      "call-sync",
+      null,
+      "syncChannel",
+      "call:window.bridge.callSync",
+    ],
   ]);
   // Dynamic channels are unknown values, not absent ones.
   expect(analysis.parse_status).toBe("partial");
@@ -84,6 +100,9 @@ it("does not treat unrelated postMessage or argument-free handler calls as bridg
     port.messageHandlers.save.postMessage(value);
     self.webkit.postMessage(value);
     emitter.callHandler();
+    bridge.callSync();
+    callSync("path.readText", path);
+    const callSyncRef = bridge.callSync;
     function registerHandler(name, handler) {}
     registerHandler("local", () => {});
   `);

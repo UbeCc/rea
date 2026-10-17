@@ -55,7 +55,12 @@ const nativeBridgeCall = {
   ...findingContext,
   module_runtime: z.string().exactOptional(),
   bridge: z.enum(["webkit-message-handler", "webview-javascript-bridge"]),
-  operation: z.enum(["post-message", "call-handler", "register-handler"]),
+  operation: z.enum([
+    "post-message",
+    "call-handler",
+    "call-sync",
+    "register-handler",
+  ]),
   mechanism: z.string(),
 };
 const nullHandler = { handler_kind: z.null(), handler_location: z.null() };
@@ -326,6 +331,7 @@ export const javaScriptWorkerStaticAnalysisSchema = z
             ...referenceShape,
             specifier: z.null(),
             expression: z.string(),
+            document_url: z.string().exactOptional(),
           })
           .transform(withRuntime),
       ]),
@@ -356,7 +362,7 @@ export const javaScriptWorkerStaticAnalysisSchema = z
     ),
     bundler_registrations: z.array(
       z.strictObject({
-        bundler: z.enum(["webpack", "rspack", "esbuild"]),
+        bundler: z.enum(["webpack", "rspack", "esbuild", "systemjs"]),
         runtime: z.string(),
         chunk_keys: strings,
         unknown_chunk_keys: count,
@@ -395,6 +401,24 @@ export const javaScriptWorkerStaticAnalysisSchema = z
       z.strictObject({ declared_url: z.string(), location: range }),
     ),
     vendors: strings,
+    vendor_libraries: z.array(
+      z
+        .strictObject({
+          ...findingContext,
+          module_runtime: z.string().exactOptional(),
+          name: z.string(),
+          version: z.string().nullable(),
+          signal: z.enum([
+            "banner-comment",
+            "object-keys",
+            "member-writes",
+            "member-names",
+          ]),
+          mechanism: z.string(),
+          confidence: z.enum(["high", "medium", "low"]),
+        })
+        .transform(withRuntime),
+    ),
     electron,
     native_bridges: z.array(
       z.union([

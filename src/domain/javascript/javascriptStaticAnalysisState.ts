@@ -21,6 +21,7 @@ import type {
   ElectronUtilityProcessFinding,
 } from "./electronStaticAnalysisTypes.js";
 import { JavaScriptModuleRangeIndex } from "./javascriptStaticAnalysisFindings.js";
+import type { PendingSystemJsRegistration } from "./javascriptStaticAnalysisSystemJs.js";
 
 /** Source offsets for one recovered bundle module factory. */
 export interface JavaScriptModuleRange {
@@ -56,6 +57,8 @@ export interface JavaScriptAnalysisAccumulator {
   readonly roles: LocatedJavaScriptFinding<JavaScriptRolePath>[];
   readonly sourceMaps: JavaScriptStaticAnalysis["source_map_urls"][number][];
   readonly registrations: JavaScriptBundlerRegistration[];
+  /** SystemJS registry modules grouped by receiver until traversal finishes. */
+  readonly systemJsRegistrations: Map<string, PendingSystemJsRegistration>;
   readonly browserWindows: LocatedJavaScriptFinding<ElectronBrowserWindowFinding>[];
   readonly pendingBrowserWindows: t.NewExpression[];
   readonly contextBridgeApis: LocatedJavaScriptFinding<ElectronContextBridgeFinding>[];
@@ -89,6 +92,8 @@ export interface JavaScriptReferenceInput {
   readonly node: t.Node;
   readonly kind: JavaScriptStaticReference["kind"];
   readonly specifier: string | undefined;
+  /** Browser worker URL text resolved against the loading document's base URL. */
+  readonly documentUrl?: string | undefined;
 }
 
 /** Candidate route or network endpoint literal. */
@@ -123,6 +128,7 @@ export const createJavaScriptAnalysisAccumulator = (
   roles: [],
   sourceMaps: [],
   registrations: [],
+  systemJsRegistrations: new Map(),
   browserWindows: [],
   pendingBrowserWindows: [],
   contextBridgeApis: [],

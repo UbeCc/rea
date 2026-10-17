@@ -10,6 +10,9 @@ export const JAVASCRIPT_ANALYSIS_RESOURCE_DEFAULTS = {
   semanticNodesPerFile: 20_000,
 } as const;
 
+/** Maximum caller-selected concurrent source workers; each owns one process. */
+export const JAVASCRIPT_ANALYSIS_WORKER_LIMIT = 64;
+
 /** Maximum caller-selected node capacity; heap and transfer admission still apply. */
 export const JAVASCRIPT_SEMANTIC_NODE_MAXIMUM = 1_000_000;
 
@@ -68,6 +71,15 @@ export const javaScriptAnalysisResourceControlsSchema = z.strictObject({
     .optional()
     .describe(
       "Maximum V8 old-space heap in MiB for the isolated JavaScript source analyzer; defaults to 1024. This does not change the CLI/MCP process heap. When REA runs on Bun, which ignores V8 heap flags, Windows instead limits the analyzer's committed memory to this budget plus a 512 MiB runtime reserve; other Bun hosts enforce no limit.",
+    ),
+  max_analysis_workers: z
+    .number()
+    .int()
+    .min(1)
+    .max(JAVASCRIPT_ANALYSIS_WORKER_LIMIT)
+    .optional()
+    .describe(
+      "Maximum concurrent isolated source-analysis workers. Defaults to the available cores minus one, at most 16, at most the number of selected JavaScript sources, and within half of physical memory at max_heap_mb plus 256 MiB per worker. Results are adopted in source order, so the worker count does not change retained facts unless parent memory admission binds.",
     ),
   analysis_timeout_ms: z
     .number()

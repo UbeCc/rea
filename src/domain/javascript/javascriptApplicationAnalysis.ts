@@ -35,7 +35,7 @@ export const analyzeJavaScriptApplicationInputSchema = z.strictObject({
 /**
  * WebView-to-native message bridge calls recognized by spelling, such as
  * WKWebView `webkit.messageHandlers.NAME.postMessage` and
- * WebViewJavascriptBridge-style `callHandler`/`registerHandler`.
+ * WebViewJavascriptBridge-style `callHandler`/`callSync`/`registerHandler`.
  */
 const nativeBridgeSummarySchema = z.strictObject({
   operations: countSchema,
@@ -43,6 +43,8 @@ const nativeBridgeSummarySchema = z.strictObject({
   dynamic_channel_operations: countSchema,
   webkit_message_handler_posts: countSchema,
   bridge_handler_calls: countSchema,
+  // Older saved evidence predates synchronous bridge calls; absence is unknown.
+  bridge_sync_calls: countSchema.exactOptional(),
   bridge_handler_registrations: countSchema,
   channels: z.array(
     z.strictObject({

@@ -21,6 +21,9 @@ const writeWebViewApplication = async (root: string): Promise<void> => {
       bridge.callHandler("controller.openFolder", { recent: true });
       bridge.callHandler(name, {});
       bridge.registerHandler("fences.needUpdate", function () {});
+      bridge.callSync("path.readText", "/tmp/a.md");
+      bridge.callSync();
+      callSync("document.isDocumentEdited");
       window.webkit.messageHandlers._setting.postMessage({ name: "theme" });
       window.Setting.get("useMirrorInCN");
       n.get("text/html");
@@ -76,6 +79,7 @@ it("projects non-Electron HTML pages as web pages and WebView bridge channels as
     ["webview-javascript-bridge", "controller.openFolder", 2],
     ["webview-javascript-bridge", "fences.needUpdate", 1],
     ["webview-javascript-bridge", "name", 1],
+    ["webview-javascript-bridge", "path.readText", 1],
   ]);
   for (const channel of channels)
     for (const { evidence } of channel.observations)
@@ -97,14 +101,27 @@ it("projects non-Electron HTML pages as web pages and WebView bridge channels as
       .filter(({ properties }) => properties.bridge !== undefined)
       .map(({ relation }) => relation)
       .sort(),
-  ).toEqual(["handles", "invokes", "invokes", "invokes", "sends"]);
+  ).toEqual(["handles", "invokes", "invokes", "invokes", "invokes", "sends"]);
+  const readText = channels.find(
+    ({ observations }) => observations[0]?.label === "path.readText",
+  );
+  expect(
+    graph.edges.find(
+      ({ target_node_id }) => target_node_id === readText?.node_id,
+    ),
+  ).toMatchObject({
+    relation: "invokes",
+    properties: { operation: "call-sync", mechanism: "call:bridge.callSync" },
+    evidence: { state: "inferred", confidence: "low" },
+  });
 
   expect(result.electron_summary.native_bridge).toEqual({
-    operations: 5,
-    literal_channels: 3,
+    operations: 6,
+    literal_channels: 4,
     dynamic_channel_operations: 1,
     webkit_message_handler_posts: 1,
     bridge_handler_calls: 3,
+    bridge_sync_calls: 1,
     bridge_handler_registrations: 1,
     channels: [
       {
@@ -124,6 +141,12 @@ it("projects non-Electron HTML pages as web pages and WebView bridge channels as
         channel: "fences.needUpdate",
         invocations: 0,
         handler_registrations: 1,
+      },
+      {
+        bridge: "webview-javascript-bridge",
+        channel: "path.readText",
+        invocations: 1,
+        handler_registrations: 0,
       },
     ],
   });

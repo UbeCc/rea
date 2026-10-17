@@ -37,6 +37,11 @@ import {
 } from "./javascriptStaticAnalysisBundler.js";
 import { finalizeLocatedFindings } from "./javascriptStaticAnalysisFindings.js";
 import {
+  finishSystemJsRegistrations,
+  inspectSystemJsRegistration,
+  systemJsLimitations,
+} from "./javascriptStaticAnalysisSystemJs.js";
+import {
   createJavaScriptAnalysisAccumulator,
   type JavaScriptAnalysisAccumulator as AnalysisAccumulator,
   type JavaScriptFindingContext,
@@ -53,6 +58,10 @@ import {
 } from "./javascriptSourceParser.js";
 
 import { createJavaScriptRpcScan } from "./javascriptRpcEndpoints.js";
+import {
+  createJavaScriptVendorLibraryScan,
+  type JavaScriptVendorLibraryScan,
+} from "./javascriptVendorLibraries.js";
 import {
   hasUncertainTypeOnlyModuleSideEffect,
   isTypeOnlyExportDeclaration,
@@ -99,7 +108,9 @@ export function* analyzeParsedJavaScriptStaticSourceSteps(
     electronBindings: electronIdentity.bindings,
     rpcScan: createJavaScriptRpcScan(source, receivers.rpcClientRoots, index),
   };
-  yield* traverseStaticSourceSteps(file, findings, bindings);
+  const vendorLibraries = createJavaScriptVendorLibraryScan();
+  yield* traverseStaticSourceSteps(file, findings, bindings, vendorLibraries);
+  finishSystemJsRegistrations(accumulator);
   yield* finishElectronBrowserWindowsSteps(findings, index);
   if (accumulator.pendingNetworkCalls.length > 0) {
     yield* index.indexMemberMutationFactsSteps();
@@ -113,20 +124,23 @@ export function* analyzeParsedJavaScriptStaticSourceSteps(
     electronIdentity,
   );
   addSourceMapDirectives(source, file.comments ?? [], accumulator);
-  return finalizeStaticAnalysis(source, file, accumulator);
+  return finalizeStaticAnalysis(source, file, accumulator, vendorLibraries);
 }
 
 function* traverseStaticSourceSteps(
   file: ParsedJavaScriptSource,
   findings: JavaScriptFindingContext,
   bindings: JavaScriptSemanticAnalysisState,
+  vendorLibraries: JavaScriptVendorLibraryScan,
 ): Generator<void, void> {
   yield* traverseJavaScriptAstSteps(file, {
     enter: (node) => {
       findings.accumulator.visitedNodes += 1;
       inspectNode(node, findings, bindings);
+      vendorLibraries.enter(node);
       return undefined;
     },
+    exit: vendorLibraries.exit,
   });
   yield* finishRpcScanSteps(findings);
 }
@@ -135,6 +149,7 @@ const finalizeStaticAnalysis = (
   source: string,
   file: ParsedJavaScriptSource,
   accumulator: AnalysisAccumulator,
+  vendorLibraries: JavaScriptVendorLibraryScan,
 ): JavaScriptStaticAnalysis => {
   const parserErrors = file.errors.length;
   const limitations = [
@@ -158,6 +173,7 @@ const finalizeStaticAnalysis = (
       : [
           "One or more static keys, expressions, or Electron boundary values were dynamic and remain unknown.",
         ]),
+    ...systemJsLimitations(accumulator.registrations),
     ...(hasUncertainTypeOnlyModuleSideEffect(file.program)
       ? [
           "Compiler options are unavailable; inline type-only imports or re-exports may preserve a module side-effect dependency.",
@@ -200,6 +216,11 @@ const finalizeStaticAnalysis = (
     ),
     source_map_urls: accumulator.sourceMaps,
     vendors: detectVendors(source),
+    vendor_libraries: vendorLibraries.finish(
+      source,
+      file.comments ?? [],
+      accumulator.moduleRangeIndex,
+    ),
     electron: {
       ...(accumulator.electronCallPaths?.length
         ? { call_paths: accumulator.electronCallPaths }
@@ -248,6 +269,7 @@ const inspectNode = (
     inspectBundlerBootstrap(source, node, accumulator, bindings);
     inspectBundlerRegistration(source, node, accumulator, bindings);
     inspectEsbuildWrapper(source, node, accumulator, bindings);
+    inspectSystemJsRegistration(node, findings, bindings);
     inspectCall(source, node, findings, bindings);
   } else if (t.isOptionalCallExpression(node)) {
     inspectCall(source, node, findings, bindings);

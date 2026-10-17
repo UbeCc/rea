@@ -19,9 +19,20 @@ import type { JavaScriptNativeBridgeCall } from "./javascriptStaticAnalysisTypes
 export const NATIVE_BRIDGE_SPELLING_LIMITATION =
   "The WebView bridge is recognized by call spelling only; the receiver binding, the embedding native host, and runtime dispatch remain unverified.";
 
+/** WebViewJavascriptBridge-style member methods whose first argument names a channel. */
+const BRIDGE_HANDLER_OPERATIONS: ReadonlyMap<
+  string,
+  "call-handler" | "call-sync" | "register-handler"
+> = new Map([
+  ["callHandler", "call-handler"],
+  // Synchronous variant; some hosts implement it with a blocking prompt().
+  ["callSync", "call-sync"],
+  ["registerHandler", "register-handler"],
+]);
+
 /**
  * Record WebKit `messageHandlers.NAME.postMessage(...)` and
- * WebViewJavascriptBridge-style `callHandler`/`registerHandler` calls.
+ * WebViewJavascriptBridge-style `callHandler`/`callSync`/`registerHandler` calls.
  */
 export const inspectNativeBridgeCall = (
   node: t.CallExpression | t.OptionalCallExpression,
@@ -35,14 +46,16 @@ export const inspectNativeBridgeCall = (
     inspectWebKitMessageHandler(node, callee, context);
     return;
   }
-  if (method !== "callHandler" && method !== "registerHandler") return;
+  const operation =
+    method === null ? undefined : BRIDGE_HANDLER_OPERATIONS.get(method);
+  if (operation === undefined) return;
   const channelNode = argumentNode(node.arguments[0]);
   // A bare `x.callHandler()` names no channel and is not a bridge use site.
   if (channelNode === undefined) return;
   const channel = stringValue(channelNode);
   addNativeBridgeCall(context, node, {
     bridge: "webview-javascript-bridge",
-    operation: method === "callHandler" ? "call-handler" : "register-handler",
+    operation,
     mechanism: `call:${calleeName(node.callee)}`,
     ...(channel === undefined
       ? {

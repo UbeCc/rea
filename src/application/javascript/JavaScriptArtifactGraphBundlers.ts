@@ -17,7 +17,7 @@ import {
   staticInferenceEvidence,
 } from "./JavaScriptArtifactGraphEvidence.js";
 
-/** Project Webpack/Rspack AST literals and disclose unrepresentable relationships. */
+/** Project bundler and SystemJS registry literals and disclose unrepresentable relationships. */
 export const addJavaScriptBundlerNodes = (
   context: JavaScriptArtifactGraphContext,
 ): readonly string[] => {

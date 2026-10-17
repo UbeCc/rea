@@ -29,12 +29,32 @@ export interface JavaScriptSourceAnalysisLimits {
   readonly timeoutMs: number;
 }
 
-/** Sequential source-analysis authority with independently verified cleanup. */
+/**
+ * In-order admission for a source analyzed ahead of its turn. Execution may
+ * overlap other sources, but result admission waits until every earlier
+ * source was adopted, then applies the sequential capacity rules.
+ */
+export interface JavaScriptSourceAdmissionTurn {
+  /** Resolves when every earlier source in adoption order was adopted. */
+  readonly opened: Promise<void>;
+  /** Selected sources after this one in adoption order. */
+  readonly sourcesAfter: number;
+  /** The turn is already open: admit sequentially from the start. */
+  readonly current: boolean;
+}
+
+/**
+ * Source-analysis authority with independently verified cleanup. Concurrent
+ * implementations accept up to `concurrency` outstanding analyses; omission
+ * means one source at a time.
+ */
 export interface JavaScriptSourceAnalysisPort {
+  readonly concurrency?: number;
   analyze(
     file: JavaScriptArtifactFile,
     nodeBudget: number,
     signal?: AbortSignal,
+    turn?: JavaScriptSourceAdmissionTurn,
   ): Promise<Result<JavaScriptAnalyzedSource, JavaScriptSourceAnalysisFailure>>;
   close(): Promise<void>;
 }
