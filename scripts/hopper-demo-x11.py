@@ -856,6 +856,9 @@ def run_launch(args: argparse.Namespace) -> int:
             "invalid_launch_command",
             "invalid Hopper launch command",
         )
+    # Without this library Hopper only shows "Cannot launch script" in its
+    # console and the bridge never connects; report it before launching.
+    args.python_library = check_python_library(args)
     xvfb, display_name, authority, capture = start_xvfb(socket.parent, args)
     child: subprocess.Popen[bytes] | None = None
     display: int | None = None
