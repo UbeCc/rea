@@ -594,6 +594,44 @@ const isKeyedCollectionReceiver = (callee: t.Node): boolean => {
   );
 };
 
+const KEYED_LOOKUP_METHODS = new Set(["get", "delete", "put"]);
+
+/** IANA top-level media types; `text/html` is a MIME type, not a route. */
+const MEDIA_TYPE =
+  /^(?:application|audio|font|image|message|model|multipart|text|video)\/[\w.+-]+$/iu;
+
+/** A literal shaped like a URL, a path, or a path-relative request target. */
+const isRequestShapedLiteral = (value: string): boolean =>
+  isRequestUrlReference(value) ||
+  (value.includes("/") && !/\s/u.test(value) && !MEDIA_TYPE.test(value));
+
+/**
+ * Receiver spellings conventionally bound to HTTP clients (`api`, `client`,
+ * `http`, `axios`, `apiClient`, `this.$http`). Spelling is not a binding
+ * proof; it only keeps the ambiguous argument eligible as a candidate.
+ */
+const isHttpClientReceiverSpelling = (callee: t.Node): boolean => {
+  callee = unwrapJavaScriptExpression(callee).node;
+  if (!t.isMemberExpression(callee) && !t.isOptionalMemberExpression(callee))
+    return false;
+  const receiver = unwrapJavaScriptExpression(callee.object).node;
+  const name = t.isIdentifier(receiver)
+    ? receiver.name
+    : t.isMemberExpression(receiver) || t.isOptionalMemberExpression(receiver)
+      ? semanticStaticPropertyKey(receiver.property, receiver.computed)
+      : null;
+  return (
+    name !== null &&
+    (HTTP_CLIENT_NAME.test(name) || HTTP_CLIENT_NAME_SUFFIX.test(name))
+  );
+};
+
+const HTTP_CLIENT_NAME =
+  /^\$?(?:api|client|https?|axios|ajax|request|rest|fetcher)$/iu;
+/** A camelCase suffix such as `userApi`, `apiClient`, `authHTTP`. */
+const HTTP_CLIENT_NAME_SUFFIX =
+  /[a-z0-9_$](?:Api|API|Client|Http|HTTP|Https|Axios|Ajax|Request|Rest|Fetcher)$/u;
+
 /** A literal endpoint shape or an ambiguous argument of an HTTP-method-named call. */
 export interface JavaScriptEndpointArgument {
   readonly kind: "endpoint" | "candidate";
@@ -652,6 +690,16 @@ export const endpointArgument = (
         (method === "get" &&
           (receiverFact === "configuration" ||
             receiverFact === "extension-state")))
+    )
+      return undefined;
+    // get, delete and put are also the keyed-lookup verbs of Map, Headers,
+    // FormData, Cache, settings, i18n and attribute stores. A bare key passed
+    // to such a verb on a receiver not spelled as an HTTP client carries no
+    // request evidence, so it is not retained even as a candidate.
+    if (
+      KEYED_LOOKUP_METHODS.has(method) &&
+      !isRequestShapedLiteral(value) &&
+      !isHttpClientReceiverSpelling(callee)
     )
       return undefined;
     return {

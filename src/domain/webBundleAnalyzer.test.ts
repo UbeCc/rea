@@ -549,13 +549,12 @@ describe("web bundle endpoint candidate classification", () => {
     const candidates = result.inferences.filter(
       ({ kind }) => kind === "endpoint_candidate",
     );
+    // Bare keys passed to keyed-lookup verbs on receivers not spelled as
+    // HTTP clients (form, translate, cookieService) carry no request evidence.
     expect(candidates.map(({ value }) => value).sort()).toEqual([
-      "ADDRESS_ADDED",
       "POST",
       "X",
       "login",
-      "passwordControl",
-      "token",
       "users",
     ]);
     expect(
@@ -586,7 +585,7 @@ describe("web bundle endpoint candidate classification", () => {
   });
 
   it("deduplicates repeated candidate sites while keeping script, value and detector identity", () => {
-    const source = `${'form.get("name");\n'.repeat(5_000)}translate.get("name");\nform.get("other");`;
+    const source = `${'api.get("name");\n'.repeat(5_000)}client.get("name");\napi.get("other");`;
     const captured = inspection(source);
     const first = captured.scripts.items[0];
     if (first === undefined) throw new Error("Missing captured script fixture");
@@ -616,9 +615,9 @@ describe("web bundle endpoint candidate classification", () => {
       expect(
         local.map(({ value, basis }) => [value, basis[0]?.detector]),
       ).toEqual([
-        ["name", "call:form.get:unverified-network-receiver"],
-        ["name", "call:translate.get:unverified-network-receiver"],
-        ["other", "call:form.get:unverified-network-receiver"],
+        ["name", "call:api.get:unverified-network-receiver"],
+        ["name", "call:client.get:unverified-network-receiver"],
+        ["other", "call:api.get:unverified-network-receiver"],
       ]);
       expect(local[0]?.basis[0]).toMatchObject({
         line: 1,
@@ -652,36 +651,38 @@ describe("web bundle configuration and navigation parity", () => {
       let c = Mt.workspace.getConfiguration("git", uri), l = c.get("timeline.date");
       let changed = vscode.workspace.getConfiguration("git");
       changed = api;
-      changed.get("reassigned");
+      changed.get("v1/reassigned");
       const maybe = flag ? vscode.workspace.getConfiguration("git") : api;
-      maybe.get("conditional");
+      maybe.get("v1/conditional");
       {
         const config = api;
-        config.get("shadowed");
+        config.get("v1/shadowed");
       }
       api.get("users");
       const client = getConfiguration("/api/v1");
       client.get("accounts");
-      http.getConfiguration(baseUrl).get("orders");
+      http.getConfiguration(baseUrl).get("v1/orders");
       {
         const workspace = { getConfiguration: () => api };
-        workspace.getConfiguration("/api").get("local-users");
+        workspace.getConfiguration("/api").get("v1/local-users");
       }
       {
         const vscode = { workspace: { getConfiguration: () => api } };
-        vscode.workspace.getConfiguration("/api").get("local-orders");
+        vscode.workspace.getConfiguration("/api").get("v1/local-orders");
       }
     `;
+    // Receivers that are not proven configuration objects keep path-shaped
+    // keys as candidates; bare keys need an HTTP-client receiver spelling.
     const expected = [
       "/v1/settings",
       "accounts",
-      "conditional",
-      "local-orders",
-      "local-users",
-      "orders",
-      "reassigned",
-      "shadowed",
       "users",
+      "v1/conditional",
+      "v1/local-orders",
+      "v1/local-users",
+      "v1/orders",
+      "v1/reassigned",
+      "v1/shadowed",
     ];
     const web = analyzeCapturedWebBundle(inspection(source));
     expect(web.observations.endpoints.map(({ value }) => value)).toEqual([
@@ -702,11 +703,11 @@ describe("web bundle configuration and navigation parity", () => {
 
   it("classifies proven VS Code extension state reads as non-endpoints", () => {
     const reads = `
-      context.globalState.get("lastVersion");
-      this.workspaceState.get("closedRepositories", []);
-      context?.globalState.get("onboarded");
+      context.globalState.get("state/lastVersion");
+      this.workspaceState.get("state/closedRepositories", []);
+      context?.globalState.get("state/onboarded");
       context.globalState.get("/v1/state");
-      context.secrets.get("token");
+      context.secrets.get("secret/token");
       api.get("users");
     `;
     const analyze = (source: string) => {
@@ -736,7 +737,7 @@ describe("web bundle configuration and navigation parity", () => {
     };
     const proven = {
       endpoints: ["/v1/state"],
-      candidates: ["token", "users"],
+      candidates: ["secret/token", "users"],
     };
     expect(analyze(`const vscode = require("vscode");${reads}`)).toEqual({
       web: proven,
@@ -749,10 +750,10 @@ describe("web bundle configuration and navigation parity", () => {
     const unproven = {
       endpoints: ["/v1/state"],
       candidates: [
-        "closedRepositories",
-        "lastVersion",
-        "onboarded",
-        "token",
+        "secret/token",
+        "state/closedRepositories",
+        "state/lastVersion",
+        "state/onboarded",
         "users",
       ],
     };
