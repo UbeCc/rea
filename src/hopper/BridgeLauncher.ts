@@ -28,8 +28,8 @@ import { prepareHopperMachOImage } from "./HopperMachOImage.js";
 import type { MachOThinSlice } from "../artifacts/apple/MachOThinSlice.js";
 
 import {
-  acquireHopperTargetLease,
   acquireLinuxHopperApplicationLease,
+  acquireMacHopperApplicationLease,
 } from "../process/HopperLease.js";
 import type { HopperTargetLease } from "../process/HopperLease.js";
 import { HOPPER_SHUTDOWN_TIMEOUT_MS } from "./HopperSessionValues.js";
@@ -39,6 +39,9 @@ import { retryLinuxHopperPublisherCleanup } from "../application/LinuxHopperPubl
 
 const execFileAsync = promisify(execFile);
 const HOPPER_BACKGROUND_STARTUP_MS = 5_000;
+/** Bounded wait for another REA session to release macOS Hopper. */
+export const HOPPER_APPLICATION_LEASE_WAIT_MS = 30_000;
+const HOPPER_APPLICATION_LEASE_POLL_MS = 500;
 
 /** Coordinates for one private bridge session. */
 export interface BridgeSession {
@@ -117,8 +120,12 @@ export interface HopperApplicationLauncherDependencies {
   readonly verifyLinuxLauncher?: typeof inspectLinuxHopperLauncher;
   readonly retryPublisherCleanup?: typeof retryLinuxHopperPublisherCleanup;
   readonly platform?: NodeJS.Platform;
-  readonly acquireTargetLease?: typeof acquireHopperTargetLease;
-  readonly acquireApplicationLease?: typeof acquireLinuxHopperApplicationLease;
+  /** Platform application lease; defaults to the macOS or Linux demo owner. */
+  readonly acquireApplicationLease?: (input: {
+    readonly runId: string;
+  }) => ReturnType<typeof acquireMacHopperApplicationLease>;
+  /** macOS wait for a competing session before reporting its owner. */
+  readonly applicationLeaseWaitMs?: number;
   readonly selectPrivateDisplay?: (options: {
     readonly environment: Readonly<NodeJS.ProcessEnv>;
     readonly helperPath: string;
@@ -181,7 +188,10 @@ export class HopperApplicationLauncher implements BridgeLauncher {
       HopperStartError | HopperCancelledError | HopperProcessError
     >
   > {
-    const leaseResult = await this.#acquireLaunchLease(session.runId);
+    const leaseResult = await this.#acquireLaunchLease(
+      session.runId,
+      options.signal,
+    );
     if (!leaseResult.ok) return leaseResult;
     const lease = leaseResult.value;
     let leaseTransferred = false;
@@ -349,36 +359,54 @@ export class HopperApplicationLauncher implements BridgeLauncher {
 
   async #acquireLaunchLease(
     runId: string,
-  ): Promise<Result<HopperTargetLease | undefined, HopperStartError>> {
+    signal: AbortSignal | undefined,
+  ): Promise<
+    Result<
+      HopperTargetLease | undefined,
+      HopperStartError | HopperCancelledError
+    >
+  > {
     const platform = this.dependencies.platform ?? process.platform;
-    const applicationLease =
-      platform === "linux" && usesLinuxDemo(this.options);
-    if (!applicationLease && platform !== "darwin") return ok(undefined);
+    const linuxDemo = platform === "linux" && usesLinuxDemo(this.options);
+    if (!linuxDemo && platform !== "darwin") return ok(undefined);
+    const acquire =
+      this.dependencies.acquireApplicationLease ??
+      (linuxDemo
+        ? acquireLinuxHopperApplicationLease
+        : (input: { readonly runId: string }) =>
+            acquireMacHopperApplicationLease({
+              ...input,
+              launcherPath: this.options.launcherPath,
+            }));
+    // The Linux demo forwards a launch to its singleton immediately; keep its
+    // fail-fast contract. macOS sessions are commonly short CLI calls, so wait
+    // briefly for the current owner before reporting it.
+    const waitMs = linuxDemo
+      ? 0
+      : (this.dependencies.applicationLeaseWaitMs ??
+        HOPPER_APPLICATION_LEASE_WAIT_MS);
+    const waitStarted = Date.now();
     try {
-      const acquisition = applicationLease
-        ? await (
-            this.dependencies.acquireApplicationLease ??
-            acquireLinuxHopperApplicationLease
-          )({ runId })
-        : await (
-            this.dependencies.acquireTargetLease ?? acquireHopperTargetLease
-          )({
-            targetPath: this.options.targetPath,
-            targetKind: this.options.targetKind,
-            loaderArgs: this.options.loaderArgs,
-            runId,
-          });
-      if (!acquisition.acquired)
-        return err(
-          new HopperStartError({
-            ownerRunId: acquisition.owner.runId,
-            userMessage: applicationLease
-              ? `Linux Hopper is already active in REA session ${acquisition.owner.runId}; it cannot open ${this.options.targetPath} in another session. This build forwards new launches to the existing application. Use the owning REA session to switch targets, or close it before retrying.`
-              : `This Hopper target is already open in REA session ${acquisition.owner.runId}. ` +
-                "Use that REA session or close it before opening this target again.",
-          }),
-        );
-      return ok(acquisition.lease);
+      for (;;) {
+        const acquisition = await acquire({ runId });
+        if (acquisition.acquired) return ok(acquisition.lease);
+        const remaining = waitMs - (Date.now() - waitStarted);
+        if (remaining <= 0)
+          return err(
+            this.#applicationBusy(
+              acquisition.owner,
+              linuxDemo,
+              Date.now() - waitStarted,
+            ),
+          );
+        if (
+          (await waitForAbortableDelay(
+            Math.min(HOPPER_APPLICATION_LEASE_POLL_MS, remaining),
+            signal,
+          )) === "aborted"
+        )
+          return err(new HopperCancelledError());
+      }
     } catch (cause: unknown) {
       return err(
         cause instanceof HopperStartError
@@ -386,6 +414,19 @@ export class HopperApplicationLauncher implements BridgeLauncher {
           : new HopperStartError({ cause }),
       );
     }
+  }
+
+  #applicationBusy(
+    owner: { readonly runId: string; readonly processId: number },
+    linuxDemo: boolean,
+    waitedMs: number,
+  ): HopperStartError {
+    return new HopperStartError({
+      ownerRunId: owner.runId,
+      userMessage: linuxDemo
+        ? `Linux Hopper is already active in REA session ${owner.runId}; it cannot open ${this.options.targetPath} in another session. This build forwards new launches to the existing application. Use the owning REA session to switch targets, or close it before retrying.`
+        : `Hopper is already serving REA session ${owner.runId} (process ${owner.processId}); it cannot open ${this.options.targetPath} in another session. macOS Hopper runs one REA session at a time because each REA bridge occupies Hopper's single Python thread until its session closes. REA waited ${Math.round(waitedMs / 1_000)} s. Send related queries through one session (for example MCP open_binary followed by batch_decompile), or retry after that session closes.`,
+    });
   }
 
   async #writeBootstrap(

@@ -10,7 +10,7 @@ import { z } from "zod";
 
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { workspaceCliTest } from "../../support/cli/workspaceCliFixture.js";
-import { acquireHopperTargetLease } from "../../../src/process/HopperLease.js";
+import { acquireMacHopperApplicationLease } from "../../../src/process/HopperLease.js";
 
 const statusSchema = z.object({ result: z.object({ open: z.boolean() }) });
 const test = workspaceCliTest.skipIf(process.platform !== "darwin");
@@ -104,10 +104,8 @@ test(
         // The fixture created only this marker, never a native GUI document.
         if (runtime !== undefined)
           await rm(runtime, { recursive: true, force: true });
-        const acquired = await acquireHopperTargetLease({
-          targetPath: target,
-          targetKind: "executable",
-          loaderArgs,
+        const acquired = await acquireMacHopperApplicationLease({
+          launcherPath: process.execPath,
           runId: "literal-boundary-test-cleanup",
         });
         if (!acquired.acquired) throw new Error("Fixture lease remained live");

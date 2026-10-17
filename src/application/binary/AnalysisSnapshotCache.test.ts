@@ -314,7 +314,15 @@ describe("analysis snapshot cache policy", () => {
       cacheable: false,
     },
     { policy: "snapshot", operation: "list_documents", cacheable: false },
-    { policy: "snapshot", operation: "list_strings", cacheable: false },
+    // Snapshot policy binds an omitted document to the single analyzed program.
+    { policy: "snapshot", operation: "list_strings", cacheable: true },
+    { operation: "list_strings", cacheable: false },
+    {
+      policy: "snapshot",
+      operation: "procedure_pseudo_code",
+      parameters: { procedure: "0x1000" },
+      cacheable: true,
+    },
     {
       policy: "snapshot",
       operation: "address_name",

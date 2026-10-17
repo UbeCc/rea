@@ -697,6 +697,18 @@ Hopper serializes analysis requests. Cancelling a wait can leave provider work
 running, which the session reports. Successful decompilation is cached until
 a relevant rename or comment changes it.
 
+On macOS, one Hopper application serves one REA session at a time, even for
+different targets: each REA bridge occupies Hopper's single Python thread until
+its session closes, and the vendor launcher drives the shared application
+through AppleScript. Running more Hopper instances does not help, because that
+launcher cannot select an instance. REA therefore reserves the Hopper
+application per user before launching. A competing CLI or MCP session waits up
+to 30 seconds for the owner to close, then reports the owning REA session and
+process as a retryable `provider_unavailable` error. Concurrent requests inside
+one session queue in order, so they gain no Hopper parallelism. To analyze many
+procedures, keep one MCP session open and use `batch_decompile` or successive
+calls. Each one-shot CLI command opens and analyzes the document again.
+
 Analysis and annotation calls stay bound to the active target's native Hopper
 document, even when GUI focus changes or other documents have the same display
 name. Use `open_binary` to change targets. Byte reads stop at a segment boundary

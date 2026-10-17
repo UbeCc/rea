@@ -74,8 +74,11 @@ export const isSnapshotCacheable = (
   parameters: Readonly<Record<string, JsonValue>>,
 ): descriptor is CapabilityDescriptor =>
   !STATEFUL_OPERATIONS.has(operation) &&
+  // A snapshot-policy provider binds an omitted document to the session's
+  // single analyzed program; other providers may resolve it from UI state.
   (!DOCUMENT_SCOPED_OPERATIONS.has(operation) ||
-    typeof parameters.document === "string") &&
+    typeof parameters.document === "string" ||
+    descriptor?.cachePolicy === "snapshot") &&
   (!CURSOR_DEFAULT_OPERATIONS.has(operation) ||
     typeof parameters.address === "string") &&
   descriptor?.effects.mutatesArtifact === false &&

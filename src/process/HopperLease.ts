@@ -32,32 +32,33 @@ export const HOPPER_TARGET_LEASE_DIRECTORY = join(
   `rea-hopper-${process.getuid?.() ?? 0}`,
 );
 
-/** Keep two REA processes from opening duplicate Hopper documents for one target/profile. */
-export const acquireHopperTargetLease = async (input: {
-  readonly targetPath: string;
-  readonly targetKind: "executable" | "database";
-  readonly loaderArgs: readonly string[];
+/**
+ * Reserve one macOS Hopper application for one REA session at a time.
+ *
+ * Every REA bridge serves its session on Hopper's single Python thread until
+ * that session closes, and the vendor launcher drives the shared application
+ * through AppleScript. A second concurrent session, even for a different
+ * target, can neither start its bridge nor reliably launch its document.
+ * The canonical launcher identifies the application; aliases share a lease.
+ */
+export const acquireMacHopperApplicationLease = async (input: {
+  readonly launcherPath: string;
   readonly runId: string;
   readonly directory?: string;
 }): Promise<HopperTargetLeaseAcquisition> => {
-  // Canonicalization is required for lease identity. A lexical fallback could
-  // let two aliases reserve independent sockets for the same Hopper document.
-  let targetPath: string;
+  let launcherPath: string;
   try {
-    targetPath = await realpath(input.targetPath);
+    launcherPath = await realpath(input.launcherPath);
   } catch (cause: unknown) {
     throw new HopperStartError({
       cause,
-      userMessage: `REA could not resolve Hopper target ${JSON.stringify(input.targetPath)} to a canonical path before reserving the document. Confirm that the target exists and its path is accessible.`,
+      userMessage: `REA could not resolve the Hopper launcher ${JSON.stringify(input.launcherPath)} to a canonical path before reserving Hopper. Confirm that the launcher exists and its path is accessible.`,
     });
   }
   return acquireLease({
-    ...input,
-    identity: {
-      targetPath,
-      targetKind: input.targetKind,
-      loaderArgs: input.loaderArgs,
-    },
+    runId: input.runId,
+    ...(input.directory === undefined ? {} : { directory: input.directory }),
+    identity: { application: "macos-hopper", launcherPath },
   });
 };
 

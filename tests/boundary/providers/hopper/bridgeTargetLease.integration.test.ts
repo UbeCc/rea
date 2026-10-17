@@ -1,7 +1,11 @@
 import { describe, expect, it } from "vitest";
 
-import { HopperApplicationLauncher } from "../../../../src/hopper/BridgeLauncher.js";
+import {
+  HopperApplicationLauncher,
+  type HopperApplicationLauncherDependencies,
+} from "../../../../src/hopper/BridgeLauncher.js";
 import { HopperStartError } from "../../../../src/domain/hopperErrors.js";
+import { projectAnalysisError } from "../../../../src/domain/analysisErrorProjection.js";
 
 describe("Linux Hopper application leases in the launcher", () => {
   it.each(["/first-target", "/different-target"])(
@@ -84,47 +88,110 @@ describe("Linux Hopper application leases in the launcher", () => {
 });
 
 describe("Hopper launch leases", () => {
-  it("reports an active target owner without launching another document", async () => {
-    let leaseChecks = 0;
-    const launcher = new HopperApplicationLauncher(
+  const macLauncher = (
+    targetPath: string,
+    dependencies: HopperApplicationLauncherDependencies,
+  ) =>
+    new HopperApplicationLauncher(
       {
         environment: {},
         launcherPath:
           "/Applications/Hopper Disassembler.app/Contents/MacOS/hopper",
-        targetPath: "/target",
+        targetPath,
         targetKind: "executable",
         loaderArgs: [],
         bridgeScriptPath: "/rea/hopper_bridge.py",
         launchMode: "native",
       },
-      {
-        platform: "darwin",
-        acquireTargetLease: async () => {
+      { platform: "darwin", ...dependencies },
+    );
+  const session = {
+    directory: "/missing/rea-launch-test",
+    socketPath: "/missing/rea-launch-test/bridge.sock",
+    token: "token",
+    runId: "new-session",
+  };
+
+  it.each(["/target", "/different-target"])(
+    "reports the macOS application owner for %s after the bounded wait",
+    async (targetPath) => {
+      let leaseChecks = 0;
+      const result = await macLauncher(targetPath, {
+        applicationLeaseWaitMs: 0,
+        acquireApplicationLease: async () => {
           leaseChecks += 1;
           return {
             acquired: false,
             owner: { runId: "owning-session", processId: 17 },
           };
         },
+      }).launch(session);
+
+      expect(leaseChecks).toBe(1);
+      expect(result).toMatchObject({
+        ok: false,
+        error: {
+          _tag: "HopperStartError",
+          ownerRunId: "owning-session",
+          userMessage: expect.stringMatching(
+            /owning-session \(process 17\).*single Python thread/su,
+          ),
+        },
+      });
+      if (!result.ok)
+        expect(projectAnalysisError(result.error)).toMatchObject({
+          code: "provider_unavailable",
+          retryable: true,
+        });
+    },
+  );
+
+  it("waits for a short competing macOS session to release Hopper", async () => {
+    let leaseChecks = 0;
+    let releases = 0;
+    const result = await macLauncher("/target", {
+      applicationLeaseWaitMs: 5_000,
+      acquireApplicationLease: async () => {
+        leaseChecks += 1;
+        return leaseChecks < 3
+          ? {
+              acquired: false,
+              owner: { runId: "short-session", processId: 17 },
+            }
+          : {
+              acquired: true,
+              lease: { release: async () => void (releases += 1) },
+            };
       },
-    );
+    }).launch(session);
 
-    const result = await launcher.launch({
-      directory: "/tmp/rea-launch-test",
-      socketPath: "/tmp/rea-launch-test/bridge.sock",
-      token: "token",
-      runId: "new-session",
-    });
+    // The lease was obtained; launch then fails at the missing bridge script
+    // directory and must release the waited-for lease exactly once.
+    expect(leaseChecks).toBe(3);
+    expect(result.ok).toBe(false);
+    expect(releases).toBe(1);
+  });
 
-    expect(leaseChecks).toBe(1);
-    expect(result).toMatchObject({
+  it("stops waiting for macOS Hopper when the caller cancels", async () => {
+    const controller = new AbortController();
+    let leaseChecks = 0;
+    const launched = macLauncher("/target", {
+      applicationLeaseWaitMs: 60_000,
+      acquireApplicationLease: async () => {
+        leaseChecks += 1;
+        if (leaseChecks === 2) controller.abort();
+        return {
+          acquired: false,
+          owner: { runId: "long-session", processId: 17 },
+        };
+      },
+    }).launch(session, { signal: controller.signal });
+
+    expect(await launched).toMatchObject({
       ok: false,
-      error: {
-        _tag: "HopperStartError",
-        ownerRunId: "owning-session",
-        userMessage: expect.stringContaining("owning-session"),
-      },
+      error: { _tag: "HopperCancelledError" },
     });
+    expect(leaseChecks).toBe(2);
   });
 
   it.each(["darwin", "linux"] as const)(
@@ -148,10 +215,6 @@ describe("Hopper launch leases", () => {
         },
         {
           platform,
-          acquireTargetLease: async () => ({
-            acquired: true,
-            lease: { release: async () => void (releases += 1) },
-          }),
           acquireApplicationLease: async () => ({
             acquired: true,
             lease: { release: async () => void (releases += 1) },

@@ -198,6 +198,13 @@ rea analyze /absolute/path/to/program --provider ghidra --snapshot /absolute/pat
 ```
 
 An exact CLI cache hit is normally read before starting a provider process.
+Ghidra binds an omitted document to its single imported Program, so its
+procedure queries replay without an explicit document; other providers
+replay document-scoped queries only when the document is named. A snapshot
+stores results, not the provider database: a new procedure or other uncached
+query starts the provider and repeats its import and analysis. To decompile
+many procedures, keep one MCP session open and call `batch_decompile`, or
+successive procedure tools, against the opened target.
 On Windows, Ghidra first admits the selected source through its native snapshot
 owner, so replay can start that provider.
 In MCP, `open_binary` accepts `snapshot_path` to import a snapshot atomically
