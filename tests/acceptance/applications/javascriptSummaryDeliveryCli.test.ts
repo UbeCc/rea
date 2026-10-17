@@ -1,4 +1,4 @@
-import { readFile, stat } from "node:fs/promises";
+import { readFile, realpath, stat } from "node:fs/promises";
 import { join } from "node:path";
 
 import { expect } from "vitest";
@@ -107,6 +107,41 @@ cliTest(
     expect(facts.exitCode, facts.stderr).toBe(0);
     expect(facts.json).toMatchObject({
       normalized_result: { kind: "javascript-facts" },
+    });
+
+    // A relative --evidence-out path is read back by the same relative path.
+    const relative = await cli.run({
+      arguments: [
+        "analyze-javascript-application",
+        root,
+        "--detail",
+        "summary",
+        "--evidence-out",
+        "evidence.json",
+        "--format",
+        "json",
+      ],
+      cwd: store,
+      environment,
+    });
+    expect(relative.exitCode, relative.stderr).toBe(0);
+    expect(receiptSchema.parse(relative.json).retained_evidence.path).toBe(
+      join(await realpath(store), "evidence.json"),
+    );
+    const relativeView = await cli.run({
+      arguments: [
+        "inspect-analysis-view",
+        "--evidence",
+        "evidence.json",
+        "--format",
+        "json",
+      ],
+      cwd: store,
+      environment,
+    });
+    expect(relativeView.exitCode, relativeView.stderr).toBe(0);
+    expect(relativeView.json).toMatchObject({
+      normalized_result: { kind: "summary", parent_evidence_id: evidenceId },
     });
 
     // Complete Evidence passed as the request names the accepted forms.

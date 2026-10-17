@@ -23,9 +23,13 @@ export const cliEvidenceDirectory = (): string => {
     : join(tmpdir(), "rea-evidence");
 };
 
+/** Whether a CLI reference names retained Evidence by ID rather than by path. */
+export const isCliEvidenceId = (reference: string): boolean =>
+  EVIDENCE_ID.test(reference);
+
 /** Exact retained path for an Evidence ID, or the caller-selected file path. */
 export const cliEvidencePath = (reference: string): string =>
-  EVIDENCE_ID.test(reference)
+  isCliEvidenceId(reference)
     ? join(cliEvidenceDirectory(), `${reference}.json`)
     : isAbsolute(reference)
       ? reference

@@ -10,7 +10,7 @@ import {
 import { CLI_COMMANDS } from "../cliCommandNames.js";
 import { parseCliJsonInput } from "../cliJsonInput.js";
 import { readJsonFile } from "../application/JsonFiles.js";
-import { cliEvidencePath } from "./cliEvidenceFiles.js";
+import { cliEvidencePath, isCliEvidenceId } from "./cliEvidenceFiles.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import { logCliCommand } from "../cliLogging.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
@@ -169,9 +169,10 @@ const analysisViewInput = async (
         input_path: path,
       },
     };
-  // An Evidence ID names the retained record; its content must agree.
+  // An Evidence ID names the retained record; its content must agree. A path
+  // (relative, absolute or through a symlinked directory) names any Evidence.
   if (
-    path !== options.evidence &&
+    isCliEvidenceId(options.evidence) &&
     !(
       typeof loaded.value === "object" &&
       loaded.value !== null &&
