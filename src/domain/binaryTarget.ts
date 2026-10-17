@@ -65,12 +65,21 @@ export type ExecutableMetadata =
     };
 
 /**
+ * How a universal (FAT) Mach-O slice is chosen: the host-compatible slice by
+ * default, or exactly the caller-selected architecture.
+ */
+export type FatSliceSelection =
+  | NodeJS.Architecture
+  | { readonly source: "caller"; readonly architecture: BinaryArchitecture };
+
+/**
  * Parse supported executable headers without I/O. The caller supplies the host
- * architecture used for deterministic FAT Mach-O slice selection.
+ * architecture, or an explicit caller selection, used for deterministic FAT
+ * Mach-O slice selection.
  */
 export const parseExecutableHeader = (
   bytes: Buffer,
-  hostArchitecture: NodeJS.Architecture,
+  hostArchitecture: FatSliceSelection,
   fileSize = bytes.length,
   mzWindowsHeaderSignature?: Buffer,
 ): Result<ExecutableMetadata, string> => {
@@ -121,7 +130,7 @@ const parseThinMachO = (
 
 const parseFatMachO = (
   bytes: Buffer,
-  host: NodeJS.Architecture,
+  selection: FatSliceSelection,
   header: Exclude<
     ReturnType<typeof readFatContainerHeader>,
     { state: "not-fat" }
@@ -147,10 +156,17 @@ const parseFatMachO = (
       size: declaration.size,
     });
   }
-  const preferred = fatHostArchitecture(host);
+  const preferred =
+    typeof selection === "string"
+      ? fatHostArchitecture(selection)
+      : architectures.find((name) => name === selection.architecture);
   const slice = preferred === undefined ? undefined : slices.get(preferred);
   if (preferred === undefined || slice === undefined)
-    return err(`FAT binary has no host-compatible ${host} architecture`);
+    return err(
+      typeof selection === "string"
+        ? `FAT binary has no host-compatible ${selection} architecture; select one of ${architectures.join(", ")} with --architecture (MCP architecture)`
+        : `FAT binary has no ${selection.architecture} slice; available architectures: ${architectures.join(", ")}`,
+    );
   const minimumHeaderSize =
     preferred === "arm64" || preferred === "x86_64" ? 32 : 28;
   if (slice.size < minimumHeaderSize)

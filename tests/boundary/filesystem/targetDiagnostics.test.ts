@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 import { systemDoctorHost } from "../../../src/application/Doctor.js";
 import { parseBinaryTarget } from "../../../src/application/BinaryTargetResolver.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
-import { pe } from "../../../src/domain/binaryTarget.fixture.js";
+import { elf, fat, pe } from "../../../src/domain/binaryTarget.fixture.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 describe("executable format refusal diagnostics", () => {
@@ -410,4 +410,65 @@ describe("caller-selected and inferred target interpretation", () => {
       });
     },
   );
+});
+
+describe("universal Mach-O slice selection diagnostics", () => {
+  const selectionRejection = async (
+    options: Parameters<typeof parseBinaryTarget>[1],
+    bytes: Buffer,
+  ) => {
+    const directory = await createTestTempDirectory("rea-slice-load-");
+    const path = join(directory, "image.bin");
+    await writeFile(path, bytes);
+    const result = await parseBinaryTarget(path, options);
+    if (result.ok) throw new Error("invalid slice selection was admitted");
+    return projectAnalysisError(result.error);
+  };
+
+  it("selects the caller's universal Mach-O slice instead of the host slice", async () => {
+    const directory = await createTestTempDirectory("rea-fat-slice-");
+    const path = join(directory, "universal");
+    await writeFile(path, fat([0x01000007, 0x0100000c]));
+    for (const [hostArchitecture, architecture] of [
+      ["x64", "arm64"],
+      ["arm64", "x86_64"],
+    ] as const) {
+      const result = await parseBinaryTarget(path, {
+        hostArchitecture,
+        architecture,
+      });
+      expect(result).toMatchObject({
+        ok: true,
+        value: {
+          format: "mach-o-universal",
+          architecture,
+          availableArchitectures: ["x86_64", "arm64"],
+        },
+      });
+    }
+    const missing = await selectionRejection(
+      { architecture: "arm" },
+      fat([0x01000007, 0x0100000c]),
+    );
+    expect(missing).toMatchObject({
+      code: "invalid_request",
+      details: { constraint: "load_selection_rejected" },
+    });
+    expect(missing.message).toContain(
+      "FAT binary has no arm slice; available architectures: x86_64, arm64",
+    );
+  });
+
+  it("rejects an architecture selection for a non-universal executable", async () => {
+    const projected = await selectionRejection(
+      { architecture: "arm" },
+      elf(2, 1, 0x3e),
+    );
+    expect(projected).toMatchObject({
+      code: "invalid_request",
+      message:
+        "Cannot open artifact: architecture applies only with format=raw-binary or to select one slice of a universal Mach-O.",
+      details: { constraint: "load_selection_rejected" },
+    });
+  });
 });

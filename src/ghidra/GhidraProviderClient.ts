@@ -609,12 +609,15 @@ export const createGhidraProviderClient = (input: {
     target.format === "raw-binary"
       ? ghidraRawBinaryLanguage(target.architecture)
       : undefined;
-  const targetLimitations = [
-    ...(loadedSlice === undefined
+  // The analyzed slice of a universal Mach-O leads the limitations: every
+  // address and decompilation in the session belongs to that one slice.
+  const sliceLimitations =
+    loadedSlice === undefined
       ? []
       : [
-          `REA imported a verified thin Mach-O slice (${target.architecture}, ${loadedSlice.byte_length} bytes at source offset ${loadedSlice.source_offset}) copied from the universal source. Target identity, address_to_file_offset, search_bytes and file-offset selectors use original-file coordinates; inspect_native_load_image source files and mappings describe the imported slice.`,
-        ]),
+          `Universal Mach-O: REA analyzed only the ${target.architecture} slice (available: ${(target.availableArchitectures ?? []).join(", ")}; select another with --architecture <arch> or MCP open_binary architecture). It imported a verified thin copy of that slice (${loadedSlice.byte_length} bytes at source offset ${loadedSlice.source_offset}). Target identity, address_to_file_offset, search_bytes and file-offset selectors use original-file coordinates; inspect_native_load_image source files and mappings describe the imported slice.`,
+        ];
+  const targetLimitations = [
     ...(target.format === "dos-mz"
       ? [
           "DOS MZ uses 16-bit x86 real mode with the Ghidra load segment 0x1000. Returned addresses are linear byte coordinates; they do not identify a unique segment:offset alias.",
@@ -819,6 +822,7 @@ export const createGhidraProviderClient = (input: {
     prerequisites.value.providerVersion,
   );
   const sessionLimitations = (): readonly string[] => [
+    ...sliceLimitations,
     ...ghidraAnalysisCacheLimitations(client.analysisCacheObservation?.()),
     ...providerLimitations,
     ...targetLimitations,

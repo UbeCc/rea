@@ -144,6 +144,10 @@ export const admitRawBinary = (input: {
   });
 };
 
+/** Caller-facing rule for an architecture outside raw-binary interpretation. */
+export const UNIVERSAL_SLICE_SELECTION_ONLY =
+  "architecture applies only with format=raw-binary or to select one slice of a universal Mach-O";
+
 /** Describe the format/architecture/entry pairing without performing I/O. */
 export const rawBinarySelectionError = (input: {
   readonly format?: ExecutableFormatHint;
@@ -157,7 +161,11 @@ export const rawBinarySelectionError = (input: {
       return "format=raw-binary requires architecture and entry_point";
     return undefined;
   }
-  if (hasArchitecture || hasEntry)
+  if (hasEntry)
     return "architecture and entry_point apply only with format=raw-binary";
+  // Without a headerless format, an architecture selects one slice of a
+  // universal Mach-O; the resolver rejects it for every other detected format.
+  if (hasArchitecture && input.format !== undefined)
+    return UNIVERSAL_SLICE_SELECTION_ONLY;
   return undefined;
 };

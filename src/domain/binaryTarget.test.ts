@@ -124,6 +124,9 @@ describe("executable header parsing", () => {
   it("rejects FAT files without a host-compatible slice", () => {
     expect(parseExecutableHeader(fat([0x01000007]), "arm64")).toMatchObject({
       ok: false,
+      error: expect.stringContaining(
+        "select one of x86_64 with --architecture",
+      ),
     });
   });
 
@@ -330,3 +333,22 @@ const fat64 = (cpus: readonly number[], littleEndian: boolean): Buffer => {
   });
   return bytes;
 };
+
+describe("caller FAT slice selection", () => {
+  it("selects exactly the caller's FAT slice regardless of host", () => {
+    const bytes = fat([0x01000007, 0x0100000c]);
+    expect(
+      parseExecutableHeader(bytes, { source: "caller", architecture: "arm64" }),
+    ).toMatchObject({
+      ok: true,
+      value: { format: "mach-o-universal", architecture: "arm64" },
+    });
+    expect(
+      parseExecutableHeader(bytes, { source: "caller", architecture: "x86" }),
+    ).toEqual({
+      ok: false,
+      error:
+        "FAT binary has no x86 slice; available architectures: x86_64, arm64",
+    });
+  });
+});

@@ -244,6 +244,14 @@ describe("raw-binary selection pairing", () => {
     ).toBe("architecture and entry_point apply only with format=raw-binary");
     expect(
       rawBinarySelectionError({ format: "dos-com", architecture: "x86" }),
-    ).toBe("architecture and entry_point apply only with format=raw-binary");
+    ).toBe(
+      "architecture applies only with format=raw-binary or to select one slice of a universal Mach-O",
+    );
+    expect(rawBinarySelectionError({ entryPoint: "0x1" })).toBe(
+      "architecture and entry_point apply only with format=raw-binary",
+    );
+  });
+  it("leaves an architecture without a headerless format to universal slice selection", () => {
+    expect(rawBinarySelectionError({ architecture: "arm64" })).toBeUndefined();
   });
 });
