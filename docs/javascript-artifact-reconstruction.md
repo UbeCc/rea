@@ -234,6 +234,11 @@ Selected bounded text is then parsed as inert data to recover:
 - local HTML script entrypoints;
 - Webpack and Rspack chunk registrations and module factories represented as
   AST literals;
+- SystemJS `register`/`registerDynamic` registry modules (including
+  systemjs-builder self-executing bundles and their entry ids), with declared
+  dependencies and factory `require` calls resolved between registry ids;
+  anonymous registrations stay owned by their file. Registry ids are
+  builder-assigned, so original module paths remain unknown;
 - static imports, dynamic imports, CommonJS `require` calls, workers, and
   service workers (only `new Worker(new URL(path, import.meta.url))` resolves
   relative to the calling module; string worker and service-worker paths use

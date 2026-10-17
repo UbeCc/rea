@@ -37,6 +37,11 @@ import {
 } from "./javascriptStaticAnalysisBundler.js";
 import { finalizeLocatedFindings } from "./javascriptStaticAnalysisFindings.js";
 import {
+  finishSystemJsRegistrations,
+  inspectSystemJsRegistration,
+  systemJsLimitations,
+} from "./javascriptStaticAnalysisSystemJs.js";
+import {
   createJavaScriptAnalysisAccumulator,
   type JavaScriptAnalysisAccumulator as AnalysisAccumulator,
   type JavaScriptFindingContext,
@@ -100,6 +105,7 @@ export function* analyzeParsedJavaScriptStaticSourceSteps(
     rpcScan: createJavaScriptRpcScan(source, receivers.rpcClientRoots, index),
   };
   yield* traverseStaticSourceSteps(file, findings, bindings);
+  finishSystemJsRegistrations(accumulator);
   yield* finishElectronBrowserWindowsSteps(findings, index);
   if (accumulator.pendingNetworkCalls.length > 0) {
     yield* index.indexMemberMutationFactsSteps();
@@ -158,6 +164,7 @@ const finalizeStaticAnalysis = (
       : [
           "One or more static keys, expressions, or Electron boundary values were dynamic and remain unknown.",
         ]),
+    ...systemJsLimitations(accumulator.registrations),
     ...(hasUncertainTypeOnlyModuleSideEffect(file.program)
       ? [
           "Compiler options are unavailable; inline type-only imports or re-exports may preserve a module side-effect dependency.",
@@ -248,6 +255,7 @@ const inspectNode = (
     inspectBundlerBootstrap(source, node, accumulator, bindings);
     inspectBundlerRegistration(source, node, accumulator, bindings);
     inspectEsbuildWrapper(source, node, accumulator, bindings);
+    inspectSystemJsRegistration(node, findings, bindings);
     inspectCall(source, node, findings, bindings);
   } else if (t.isOptionalCallExpression(node)) {
     inspectCall(source, node, findings, bindings);

@@ -79,7 +79,7 @@ interface JavaScriptBundlerModuleState {
   readonly location: JavaScriptSourceRange;
 }
 
-/** One exact module factory recovered from a Webpack/Rspack registration. */
+/** One exact module factory recovered from a bundler or SystemJS registration. */
 export interface JavaScriptBundlerModule extends JavaScriptBundlerModuleState {
   readonly structural_fingerprint_sha256: string;
   readonly structural_fingerprint_algorithm: typeof JAVASCRIPT_AST_FINGERPRINT_ALGORITHM;
@@ -87,7 +87,7 @@ export interface JavaScriptBundlerModule extends JavaScriptBundlerModuleState {
 
 /** One statically recognized bundler chunk or module registration. */
 export interface JavaScriptBundlerRegistration {
-  readonly bundler: "webpack" | "rspack" | "esbuild";
+  readonly bundler: "webpack" | "rspack" | "esbuild" | "systemjs";
   readonly runtime: string;
   readonly chunk_keys: readonly string[];
   readonly unknown_chunk_keys: number;
