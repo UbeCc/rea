@@ -598,7 +598,10 @@ Scaling ceiling: complete Evidence for a large frontend is hundreds of
 megabytes (Typora's 30-source frontend: 232 MB, 97 % semantic graph). The CLI
 streams that Evidence to stdout or `--evidence-out` without building one
 string, and MCP returns a retained-Evidence reference when a response exceeds
-the stdio budget, so the default complete contract stays available. For agent
+the stdio budget, so the default complete contract stays available. When the
+semantic graph has at least 50,000 records, complete CLI delivery without
+`--evidence-out` also writes one `rea_hint` JSON line to stderr that points to
+summary detail; stdout is unchanged. For agent
 use select `--detail summary` (MCP `detail: "summary"`), which prints about
 40 KB and pages the retained file. Worker scaling flattens near 16 workers:
 the largest sources bound the parallel phase and semantic-graph sealing plus

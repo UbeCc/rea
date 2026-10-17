@@ -73,8 +73,10 @@ const deliverCliAnalysis = async (
   evidence: Evidence,
   delivery: CliJavaScriptApplicationDelivery,
 ): Promise<JsonValue> => {
-  if (delivery.detail === "complete" && delivery.evidenceOut === undefined)
+  if (delivery.detail === "complete" && delivery.evidenceOut === undefined) {
+    adviseSummaryForLargeEvidence(evidence);
     return evidence;
+  }
   const written = await writeCliEvidenceFile(evidence, delivery.evidenceOut);
   if (!written.ok) return cliError(written.error);
   if (delivery.detail === "complete") return evidence;
@@ -95,6 +97,46 @@ const deliverCliAnalysis = async (
     },
     summary: view.value,
   };
+};
+
+/** Semantic records above which complete stdout delivery is typically 100 MB or more. */
+const LARGE_SEMANTIC_RECORDS = 50_000;
+
+/**
+ * Keep the complete default output, but tell a reader on stderr when it is
+ * large enough that summary detail would serve an agent better.
+ */
+export const adviseSummaryForLargeEvidence = (
+  evidence: Pick<Evidence, "normalized_result">,
+  threshold = LARGE_SEMANTIC_RECORDS,
+  write: (text: string) => void = (text) => process.stderr.write(text),
+): void => {
+  const result = evidence.normalized_result;
+  const graph =
+    typeof result === "object" && result !== null && !Array.isArray(result)
+      ? (result as { readonly semantic_graph?: unknown }).semantic_graph
+      : undefined;
+  if (typeof graph !== "object" || graph === null) return;
+  const { nodes, relations, unknowns } = graph as {
+    readonly nodes?: unknown;
+    readonly relations?: unknown;
+    readonly unknowns?: unknown;
+  };
+  const records = [nodes, relations, unknowns].reduce<number>(
+    (total, list) => total + (Array.isArray(list) ? list.length : 0),
+    0,
+  );
+  if (records < threshold) return;
+  write(
+    `${JSON.stringify({
+      rea_hint: {
+        kind: "large_complete_evidence",
+        semantic_records: records,
+        message:
+          "The complete Evidence is large. Use --detail summary to print a small summary and retain the complete Evidence in a file for inspect-analysis-view, or --evidence-out PATH to also write it to a file.",
+      },
+    })}\n`,
+  );
 };
 
 const cliError = (
