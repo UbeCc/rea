@@ -85,6 +85,19 @@ describe("Concurrent JavaScript source analysis", () => {
     const concurrent = await analyze(root, 4, limits);
     expect(sequential.semantic_graph.coverage.truncated).toBe(true);
     expect(sequential.semantic_graph.nodes.length).toBeLessThanOrEqual(900);
+    // Truncation names each stopped source and its offer in the top-level
+    // and semantic limitations rather than only in aggregate coverage.
+    const named = sequential.limitations.filter((limitation) =>
+      limitation.startsWith("Semantic graph for "),
+    );
+    expect(named.length).toBeGreaterThan(0);
+    expect(named[0]).toMatch(
+      /^Semantic graph for [a-z-]+\.mjs stopped at \d+ retained nodes: its node offer was \d+ \(per-file ceiling 800, application ceiling 900\)/u,
+    );
+    expect(sequential.semantic_graph.limitations).toEqual(
+      expect.arrayContaining(named),
+    );
+    expect(concurrent.limitations).toEqual(sequential.limitations);
     expect(concurrent.semantic_graph.graph_id).toBe(
       sequential.semantic_graph.graph_id,
     );

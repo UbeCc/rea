@@ -174,7 +174,10 @@ export interface JavaScriptSemanticGraphProjection {
   /** Adopt decoded file-local facts; final validation and proof remain in this realm. */
   readonly adoptFileProjection: (
     projection: JavaScriptSemanticFileProjection,
+    sourcePath: string,
   ) => void;
+  /** One limitation per source whose semantic nodes stopped at a node ceiling. */
+  readonly truncationLimitations: () => readonly string[];
   /** Preserve JavaScript-source unknowns; other file kinds have no semantic module. */
   readonly recordUnavailableFile: (
     file: JavaScriptArtifactFile,
@@ -218,7 +221,11 @@ export const createJavaScriptSemanticGraphProjection = (
       throw new RangeError("Semantic graph requires valid node capacities");
   const state = emptyState();
   const fingerprints: JavaScriptSemanticFingerprint[] = [];
-  let truncatedFiles = 0;
+  // Source path -> retained nodes and the node offer that stopped it.
+  const truncatedSources = new Map<
+    string,
+    { readonly retained: number; readonly offered: number }
+  >();
   let unavailableFiles = 0;
   let resourceTruncatedFiles = 0;
   const executionLimits = new Map<
@@ -231,17 +238,23 @@ export const createJavaScriptSemanticGraphProjection = (
     paths: readonly ElectronCallPath[] = [],
   ): Generator<void, void> {
     if (state.nodes.size >= nodeCeiling) {
-      truncatedFiles += 1;
+      truncatedSources.set(file.path, { retained: 0, offered: 0 });
       return;
     }
     const remainingTreeBudget = nodeCeiling - state.nodes.size;
-    state.fileNodeBudget = Math.min(fileNodeCeiling, remainingTreeBudget);
+    const offered = Math.min(fileNodeCeiling, remainingTreeBudget);
+    const before = state.nodes.size;
+    state.fileNodeBudget = offered;
     state.fileNodesDropped = false;
     fingerprints.push(...(yield* projectFileSteps(file, ir, state, paths)));
     // Nodes were dropped only if the budget actually blocked creation. A file
     // that exactly fills its share ends with a zero budget without dropping
     // anything, so the remaining budget alone cannot decide truncation.
-    if (state.fileNodesDropped) truncatedFiles += 1;
+    if (state.fileNodesDropped)
+      truncatedSources.set(file.path, {
+        retained: state.nodes.size - before,
+        offered,
+      });
     state.fileNodeBudget = null;
   };
   const finishWith = <Value>(
@@ -266,6 +279,7 @@ export const createJavaScriptSemanticGraphProjection = (
         unknownIdsByFamily.set(unknown.family, [unknown.unknown_id]);
       else identifiers.push(unknown.unknown_id);
     }
+    const truncatedFiles = truncatedSources.size;
     const graph = factory({
       schema: "JavaScriptSemanticRelationGraph",
       root_artifact_sha256: rootArtifactSha256,
@@ -322,6 +336,11 @@ export const createJavaScriptSemanticGraphProjection = (
         "Request extraction covers fetch, WebSocket, node:http/node:https construction, direct option fields, and exact local response consumers.",
         "Boundary extraction covers unshadowed JSON/global coercions plus parse and validation method candidates.",
         "Resource extraction covers built-in filesystem/network acquisition and exact local close/destroy/end handles.",
+        ...semanticTruncationLimitations(
+          truncatedSources,
+          nodeCeiling,
+          fileNodeCeiling,
+        ),
       ],
     });
     state.nodes.clear();
@@ -340,7 +359,13 @@ export const createJavaScriptSemanticGraphProjection = (
         (count, { node_id }) => count + Number(!state.nodes.has(node_id)),
         0,
       ),
-    adoptFileProjection: (projection) => {
+    truncationLimitations: () =>
+      semanticTruncationLimitations(
+        truncatedSources,
+        nodeCeiling,
+        fileNodeCeiling,
+      ),
+    adoptFileProjection: (projection, sourcePath) => {
       const newNodes = projection.nodes.filter(
         ({ node_id }) => !state.nodes.has(node_id),
       );
@@ -353,6 +378,7 @@ export const createJavaScriptSemanticGraphProjection = (
         );
       for (const context of projection.evidenceContexts)
         state.evidenceContexts.adopt(context);
+      const before = state.nodes.size;
       for (const node of newNodes) state.nodes.set(node.node_id, node);
       for (const relation of projection.relations)
         state.relations.set(relation.relation_id, relation);
@@ -360,7 +386,11 @@ export const createJavaScriptSemanticGraphProjection = (
         state.unknowns.set(unknown.unknown_id, unknown);
       for (const root of projection.roots) state.roots.add(root);
       fingerprints.push(...projection.fingerprints);
-      if (projection.truncated) truncatedFiles += 1;
+      if (projection.truncated)
+        truncatedSources.set(sourcePath, {
+          retained: newNodes.length,
+          offered: Math.min(fileNodeCeiling, nodeCeiling - before),
+        });
     },
     recordUnavailableFile: (file, reason, limits, unknownReason) => {
       // Both full and incremental construction enter here. Metadata/native
@@ -435,6 +465,23 @@ export const createJavaScriptSemanticGraphProjection = (
       ),
   };
 };
+
+/**
+ * Name every truncated source and the offer that stopped it. Omitted nodes,
+ * relations and unknowns of those sources are unknown, not absent.
+ */
+const semanticTruncationLimitations = (
+  truncated: ReadonlyMap<
+    string,
+    { readonly retained: number; readonly offered: number }
+  >,
+  nodeCeiling: number,
+  fileNodeCeiling: number,
+): string[] =>
+  [...truncated].map(
+    ([path, { retained, offered }]) =>
+      `Semantic graph for ${path} stopped at ${String(retained)} retained nodes: its node offer was ${String(offered)} (per-file ceiling ${String(fileNodeCeiling)}, application ceiling ${String(nodeCeiling)}). Its remaining semantic nodes, relations and unknowns were not retained and remain unknown, not absent; select a larger max_semantic_nodes_per_file or max_semantic_nodes to retain more.`,
+  );
 
 /** Project one source with the parent's remaining node capacity, retaining no full IR. */
 export function* projectJavaScriptSemanticFileSteps(

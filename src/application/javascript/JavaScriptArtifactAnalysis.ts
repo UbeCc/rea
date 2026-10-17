@@ -180,7 +180,7 @@ export const analyzeAndAdoptJavaScriptArtifactFiles = async (
         const facts = result.ok ? result.value : result.error;
         const applicationProjectionFailure = facts.applicationProjectionFailure;
         if (facts.projection !== null)
-          projection.adoptFileProjection(facts.projection);
+          projection.adoptFileProjection(facts.projection, file.path);
         const error = result.ok ? null : result.error.error;
         const limits =
           error instanceof AnalysisResourceConstraintError

@@ -292,7 +292,13 @@ export const reconstructJavaScriptArtifact = async (
           modules: analysis.modules,
           parse_failures: analysis.parse_failures,
         },
-        limitations: analysis.limitations,
+        // The application graph already carries the analysis limitations;
+        // also name every source whose semantic nodes stopped at a ceiling
+        // here, not only in the semantic graph's aggregate coverage.
+        limitations: [
+          ...graph.limitations,
+          ...semanticProjection.truncationLimitations(),
+        ],
       };
       if (interruption !== null && interruption !== undefined) {
         const { electron_summary: summary, ...application } = completed;
@@ -300,7 +306,7 @@ export const reconstructJavaScriptArtifact = async (
           parseOwnedJavaScriptApplicationAnalysisSteps({
             ...application,
             summary,
-            limitations: completed.graph.limitations,
+            limitations: completed.limitations,
           }),
         );
         const evidence =

@@ -79,7 +79,7 @@ export const analyzeJavaScriptApplicationValidated = async (
       parseOwnedJavaScriptApplicationAnalysisSteps({
         ...application,
         summary,
-        limitations: reconstructed.graph.limitations,
+        limitations: reconstructed.limitations,
       }),
       options.signal,
     );
@@ -119,7 +119,7 @@ export const analyzeJavaScriptApplicationValidated = async (
             parseOwnedJavaScriptApplicationAnalysisSteps({
               ...application,
               summary,
-              limitations: reconstructed.graph.limitations,
+              limitations: reconstructed.limitations,
             }),
           );
         }
