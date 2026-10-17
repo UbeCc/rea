@@ -54,6 +54,16 @@ procedures with that name fail as ambiguous with their entry addresses. Hopper
 accepts `Class::selector` when exactly one of `-[Class selector]` and
 `+[Class selector]` exists. Exact native symbols always win.
 
+`trace_feature` / `rea trace` follows each matched string to its references.
+An Objective-C `@"..."` literal is referenced only from the C-string field of a
+constant CFString object in `__cfstring`, which lies outside every procedure.
+When such a reference resolves to `not_in_procedure`, the trace reads that
+field, and only when it points at the matched string does it continue from the
+object start to the code that loads it. Those references carry
+`via: {kind: "cfstring", object_address, string_reference_address}`; the
+original data reference is kept. Providers without segment names or byte reads
+keep the previous result.
+
 ## Native instruction, call and type primitives
 
 Ghidra supplies three exact-object operations:

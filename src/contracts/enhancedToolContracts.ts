@@ -68,7 +68,7 @@ export const ENHANCED_TOOL_CONTRACTS = [
   ...FUNCTION_WORKFLOW_TOOL_CONTRACTS,
   enhanced(
     "trace_feature",
-    "Trace the complete literal query, preserving spaces, through every matching string and procedure, their xrefs, and truthful containing-procedure resolution. Returns observations, operation count, and residual unknowns without inferring reference kinds.",
+    "Trace the complete literal query, preserving spaces, through every matching string and procedure, their xrefs, and truthful containing-procedure resolution. A string referenced from a verified Mach-O constant CFString object continues to the code that loads that object, marked via cfstring. Returns observations, operation count, and residual unknowns without inferring reference kinds.",
     enhancedInputSchemas.trace_feature,
   ),
   enhanced(

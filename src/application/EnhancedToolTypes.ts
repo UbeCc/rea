@@ -19,6 +19,14 @@ export type TraceReference = {
   readonly target_address: string;
   readonly source_address: string;
   readonly containing_procedure: JsonValue;
+  /** Present when the reference reaches the target through a data object. */
+  readonly via?: {
+    readonly kind: "cfstring";
+    /** Start of the verified constant CFString object. */
+    readonly object_address: string;
+    /** Reference from the object's C-string field to the matched string. */
+    readonly string_reference_address: string;
+  };
 };
 
 /** One enhanced call whose input was parsed at its owning adapter boundary. */
