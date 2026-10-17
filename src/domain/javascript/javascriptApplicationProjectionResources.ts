@@ -15,6 +15,7 @@ export const estimateJavaScriptStaticApplicationProjection = (
     facts.storage.length +
     facts.role_paths.length +
     facts.source_map_urls.length +
+    facts.native_bridges.length +
     facts.electron.browser_windows.length +
     facts.electron.context_bridge_apis.length +
     facts.electron.ipc.length +

@@ -51,8 +51,8 @@ it.each(expressionWrappers)(
     ${call(`new ${wrap("Headers")}()`, "get", "/api/header-shaped")}
     ${call("settings", "get", "https://api.example.test/config-shaped")}
     ${call("client", "get", "/api/items")}
-    ${call("changed", "get", "changed-setting")}
-    ${call("uncertain", "get", "conditional-setting")}
+    ${call("changed", "get", "changed/setting")}
+    ${call("uncertain", "get", "conditional/setting")}
   `);
     expect(analysis.parse_error_count).toBe(0);
     expect(analysis.parse_status).toBe("complete");
@@ -66,8 +66,8 @@ it.each(expressionWrappers)(
       ["/api/header-shaped", null],
       ["https://api.example.test/config-shaped", null],
       ["/api/items", null],
-      ["changed-setting", "candidate"],
-      ["conditional-setting", "candidate"],
+      ["changed/setting", "candidate"],
+      ["conditional/setting", "candidate"],
     ]);
   },
 );
@@ -76,9 +76,9 @@ it("retains uncertainty and module evidence for wrapped get receivers", () => {
   const analysis = analyzeJavaScriptStaticSource(`
     const vscode = otherLibrary;
     const settings = vscode.workspace.getConfiguration("editor");
-    (settings.get as any)("unproven-config");
-    (context.globalState.get as any)("unproven-state");
-    ((choose ? new Headers() : client).get as any)("uncertain-receiver");
+    (settings.get as any)("unproven/config");
+    (context.globalState.get as any)("unproven/state");
+    ((choose ? new Headers() : client).get as any)("uncertain/receiver");
     (client[method] as any)("unknown-method");
     ((choose ? client.get : client.post) as any)("unknown-target");
   `);
@@ -89,9 +89,9 @@ it("retains uncertainty and module evidence for wrapped get receivers", () => {
       interpretation,
     ]),
   ).toEqual([
-    ["unproven-config", "candidate"],
-    ["unproven-state", "candidate"],
-    ["uncertain-receiver", "candidate"],
+    ["unproven/config", "candidate"],
+    ["unproven/state", "candidate"],
+    ["uncertain/receiver", "candidate"],
   ]);
 });
 

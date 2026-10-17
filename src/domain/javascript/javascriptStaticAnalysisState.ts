@@ -4,6 +4,7 @@ import type { JavaScriptRpcScan } from "./javascriptRpcEndpoints.js";
 
 import type {
   JavaScriptBundlerRegistration,
+  JavaScriptNativeBridgeCall,
   JavaScriptRolePath,
   JavaScriptStaticAnalysis,
   JavaScriptStaticEndpoint,
@@ -51,6 +52,7 @@ export interface JavaScriptAnalysisAccumulator {
     readonly name: string;
   }[];
   readonly storage: LocatedJavaScriptFinding<JavaScriptStaticStorage>[];
+  readonly nativeBridges: LocatedJavaScriptFinding<JavaScriptNativeBridgeCall>[];
   readonly roles: LocatedJavaScriptFinding<JavaScriptRolePath>[];
   readonly sourceMaps: JavaScriptStaticAnalysis["source_map_urls"][number][];
   readonly registrations: JavaScriptBundlerRegistration[];
@@ -117,6 +119,7 @@ export const createJavaScriptAnalysisAccumulator = (
   endpoints: [],
   pendingNetworkCalls: [],
   storage: [],
+  nativeBridges: [],
   roles: [],
   sourceMaps: [],
   registrations: [],

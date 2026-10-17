@@ -1,4 +1,6 @@
 import * as t from "@babel/types";
+
+import { inspectNativeBridgeCall } from "./javascriptNativeBridgeCalls.js";
 import { traverseJavaScriptAst } from "./javascriptSemanticTraversal.js";
 
 import { htmlUrlText, stripQueryAndFragment } from "../artifactPathSyntax.js";
@@ -125,6 +127,7 @@ export const inspectCall = (
     });
   inspectEndpointCall(node, name, first, context, bindings);
   inspectStorageCall(node, name, first, context);
+  if (!t.isNewExpression(node)) inspectNativeBridgeCall(node, context);
   if (first === "audio" || first === "video")
     noteMediaElementPreloads(node, accumulator);
   if (
@@ -703,13 +706,20 @@ export function* finishRpcScanSteps(
   }
 }
 
+/** SVG `d`/`path` data starts with a moveto command and a coordinate. */
+const SVG_PATH_DATA = /^\s*[Mm]\s*[-+.\d]/u;
+
 export const inspectRouteProperty = (
   node: t.ObjectProperty,
   context: FindingContext,
 ): void => {
   const key = semanticStaticPropertyName(node.key, node.computed);
   const value = stringValue(node.value);
-  if ((key === "path" || key === "route") && value !== undefined)
+  if (
+    (key === "path" || key === "route") &&
+    value !== undefined &&
+    !(key === "path" && SVG_PATH_DATA.test(value))
+  )
     addEndpoint(context, {
       node,
       kind: "route",

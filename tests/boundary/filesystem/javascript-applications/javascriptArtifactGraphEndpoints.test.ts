@@ -12,7 +12,7 @@ import { buildJavaScriptArtifactGraph } from "../../../../src/application/javasc
 
 it("keeps ambiguous endpoint candidates inferred through artifact graph projection", async () => {
   const root = await createTestTempDirectory("rea-js-endpoint-certainty-");
-  await writeFile(join(root, "app.js"), 'form.get("shared"); fetch("shared");');
+  await writeFile(join(root, "app.js"), 'api.get("shared"); fetch("shared");');
   const snapshot = await scanCanonicalArtifactInventory(root, {});
   const reader = createJavaScriptArtifactReader(root, "directory");
   try {
