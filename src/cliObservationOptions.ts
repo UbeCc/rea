@@ -75,6 +75,18 @@ export const javascriptApplicationOptions = z.object({
     javaScriptAnalysisResourceControlsSchema.shape.analysis_timeout_ms,
   maxAnalysisWorkers:
     javaScriptAnalysisResourceControlsSchema.shape.max_analysis_workers,
+  detail: z
+    .enum(["complete", "summary"])
+    .default("complete")
+    .describe(
+      "complete prints the complete analysis Evidence. summary writes it to --evidence-out (default: $REA_EVIDENCE_DIR or the temporary directory's rea-evidence/<evidence_id>.json) and prints only its summary view and that path; inspect pages with inspect-analysis-view --evidence <path|evidence_id>.",
+    ),
+  evidenceOut: z
+    .string()
+    .optional()
+    .describe(
+      "Write the complete Evidence JSON atomically to this new file path (an existing file is not replaced).",
+    ),
   artifactFormat: z
     .enum(["auto", "asar", "directory"])
     .default("auto")

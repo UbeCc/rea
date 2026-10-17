@@ -292,6 +292,12 @@ const registerJavaScriptApplicationCommand = (
                 : { max_analysis_workers: options.maxAnalysisWorkers }),
             },
             signal,
+            {
+              detail: options.detail,
+              ...(options.evidenceOut === undefined
+                ? {}
+                : { evidenceOut: options.evidenceOut }),
+            },
           ),
         ),
       ),
