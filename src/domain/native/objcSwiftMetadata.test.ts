@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { inspectNativeDispatchMetadata } from "./objcSwiftMetadata.js";
+import { inspectNativeDispatchMetadata } from "./objcSymbolDispatchMetadata.js";
 
 describe("ObjC/Swift metadata", () => {
   it("bounds symbol projections and labels symbol-only metadata as partial", () => {
@@ -110,6 +110,57 @@ describe("ObjC/Swift metadata", () => {
         status: "partial",
         examined: 2,
         decoded: 0,
+      }),
+    );
+  });
+});
+
+describe("Ghidra Objective-C symbol names", () => {
+  it("decodes Ghidra's own-class method names before imported classes", () => {
+    const imports = Array.from({ length: 5 }, (_, index) => ({
+      address: `EXTERNAL:0x${(index + 1).toString(16)}`,
+      name: `/System/Library/Frameworks/AppKit.framework/AppKit::_OBJC_CLASS_$_NSImported${String(index)}`,
+      external: true,
+    }));
+    const result = inspectNativeDispatchMetadata(
+      [
+        ...imports,
+        { address: "0x100", name: "__OBJC_CLASS_RO_$_Clip_Commands" },
+        { address: "0x200", name: "-[Clip_Commands_copy:]" },
+        { address: "0x200", name: "Clip_Commands::copy:" },
+        { address: "0x300", name: "+[NSObject(Swizzle)_load]" },
+        { address: "0x400", name: "-[Unpaired_name_sel]" },
+        { address: "0x500", name: "Clip_Commands::copy:::override::prt_500" },
+      ],
+      6,
+    );
+    expect(result.objc_dispatch_implementations).toMatchObject([
+      {
+        class_name: "Clip_Commands",
+        selector: "copy:",
+        method_type: "instance",
+        implementation_address: "0x200",
+      },
+      {
+        class_name: "NSObject(Swizzle)",
+        selector: "load",
+        method_type: "class",
+      },
+    ]);
+    expect(result.objc_classes.map((entry) => entry.name).slice(0, 2)).toEqual([
+      "Clip_Commands",
+      "NSObject(Swizzle)",
+    ]);
+    expect(result.coverage).toContainEqual(
+      expect.objectContaining({
+        facet: "objc_defined_class_symbols",
+        decoded: 2,
+      }),
+    );
+    expect(result.coverage).toContainEqual(
+      expect.objectContaining({
+        facet: "objc_dispatch_implementations",
+        reason: expect.stringContaining("record_limit_reached"),
       }),
     );
   });
