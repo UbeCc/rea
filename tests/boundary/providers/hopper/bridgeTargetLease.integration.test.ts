@@ -9,7 +9,7 @@ import { projectAnalysisError } from "../../../../src/domain/analysisErrorProjec
 
 describe("Linux Hopper application leases in the launcher", () => {
   it.each(["/first-target", "/different-target"])(
-    "rejects Linux demo launch for %s before it can forward a document to another owner",
+    "reports a busy Linux instance pool for %s before probing a display",
     async (targetPath) => {
       let probedDisplay = false;
       const launcher = new HopperApplicationLauncher(
@@ -22,9 +22,11 @@ describe("Linux Hopper application leases in the launcher", () => {
           bridgeScriptPath: "/rea/hopper_bridge.py",
           launchMode: "verified_linux_demo",
           demoHelperPath: "/rea/hopper-demo-x11.py",
+          maxLinuxInstances: 2,
         },
         {
           platform: "linux",
+          applicationLeaseWaitMs: 0,
           acquireApplicationLease: async () => ({
             acquired: false,
             owner: { runId: "owning-session", processId: 17 },
@@ -47,12 +49,61 @@ describe("Linux Hopper application leases in the launcher", () => {
         error: {
           _tag: "HopperStartError",
           ownerRunId: "owning-session",
-          userMessage: expect.stringContaining(targetPath),
+          userMessage: expect.stringMatching(
+            new RegExp(
+              `All 2 Linux Hopper instance slot\\(s\\).*${targetPath}.*REA_HOPPER_MAX_INSTANCES`,
+              "su",
+            ),
+          ),
         },
       });
       expect(probedDisplay).toBe(false);
     },
   );
+
+  it("waits for a Linux instance slot instead of failing fast", async () => {
+    let leaseChecks = 0;
+    let releases = 0;
+    const result = await new HopperApplicationLauncher(
+      {
+        environment: {},
+        launcherPath: "/unused/Hopper",
+        targetPath: "/target",
+        targetKind: "executable",
+        loaderArgs: [],
+        bridgeScriptPath: "/rea/hopper_bridge.py",
+        launchMode: "verified_linux_demo",
+        demoHelperPath: "/rea/hopper-demo-x11.py",
+        maxLinuxInstances: 1,
+      },
+      {
+        platform: "linux",
+        applicationLeaseWaitMs: 5_000,
+        acquireApplicationLease: async () => {
+          leaseChecks += 1;
+          return leaseChecks < 3
+            ? {
+                acquired: false,
+                owner: { runId: "short-session", processId: 17 },
+              }
+            : {
+                acquired: true,
+                lease: { release: async () => void (releases += 1) },
+              };
+        },
+      },
+    ).launch({
+      directory: "/missing/rea-launch",
+      socketPath: "/missing/rea-launch/bridge.sock",
+      token: "token",
+      runId: "waiting-session",
+    });
+    // The slot was obtained; launch then fails at the missing session
+    // directory and must release the waited-for slot exactly once.
+    expect(leaseChecks).toBe(3);
+    expect(result.ok).toBe(false);
+    expect(releases).toBe(1);
+  });
 
   it("preserves the reason that an existing lease could not be verified", async () => {
     const failure = new HopperStartError({

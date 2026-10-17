@@ -59,7 +59,19 @@ const failures = [
     "x11_socket_directory_unusable",
     "REA cannot use the host X11 socket directory for a private display. Run rea doctor --provider hopper for exact mount and namespace diagnostics.",
   ],
+  [
+    81,
+    "demo_session_expired",
+    "Hopper's demo period for this application session expired (the vendor demo limits each launch to about 30 minutes) and its modal dialog blocked analysis. REA stopped its owned demo application. Reopen the target (open_binary, or rerun the command) to start a new demo session; analysis state that was not exported is lost.",
+  ],
 ] as const;
+
+/**
+ * Codes the adapter reports after a successful start. They end an established
+ * session rather than describe a failed launch, so callers restart the
+ * provider instead of retrying the original launch.
+ */
+const SESSION_FAILURES: ReadonlySet<string> = new Set(["demo_session_expired"]);
 
 export type HopperStartupFailureCode = (typeof failures)[number][1];
 
@@ -123,3 +135,8 @@ export const isHopperStartupFailureCode = (
   value: string,
 ): value is HopperStartupFailureCode =>
   failures.some(([, candidate]) => candidate === value);
+
+/** True when an adapter code ended an established session after startup. */
+export const isHopperSessionFailureCode = (
+  code: HopperStartupFailureCode | undefined,
+): boolean => code !== undefined && SESSION_FAILURES.has(code);

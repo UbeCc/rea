@@ -21,6 +21,8 @@ import {
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import {
   hopperStartupFailure,
+  isHopperSessionFailureCode,
+  type HopperStartupFailureCode,
   type HopperStartupFailureDiagnostic,
 } from "../domain/hopperStartupFailure.js";
 import {
@@ -1136,7 +1138,7 @@ export class HopperClient {
       state: "exited",
       exitCode: code ?? previous?.exitCode ?? null,
       startupFailure:
-        hopperStartupFailure(code) !== undefined ||
+        isLaunchFailureCode(hopperStartupFailure(code)?.code) ||
         previous?.startupFailure === true,
       requests: previous?.requests ?? [],
     };
@@ -1151,7 +1153,7 @@ export class HopperClient {
     const state = processFailureState(error);
     const startupFailure =
       error.stage === "launch" ||
-      error.failureCode !== undefined ||
+      isLaunchFailureCode(error.failureCode) ||
       previous?.startupFailure === true;
     const merged = mergeFailedRequests(previous?.requests ?? [], requests);
     if (
@@ -1176,6 +1178,10 @@ export class HopperClient {
     };
   }
 }
+
+/** Adapter codes that describe a failed launch, not an ended session. */
+const isLaunchFailureCode = (code: HopperStartupFailureCode | undefined) =>
+  code !== undefined && !isHopperSessionFailureCode(code);
 
 interface FailedProviderRequest {
   readonly requestId: number;

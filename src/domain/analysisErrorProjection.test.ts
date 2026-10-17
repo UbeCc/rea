@@ -570,6 +570,29 @@ describe("analysis error projection: Hopper startup failures", () => {
       expect(JSON.stringify(projected)).not.toContain("/proc/");
     }
   });
+
+  it("reports an expired demo session as a retryable provider restart, not a launch failure", () => {
+    const projected = projectAnalysisError(
+      new HopperProcessError(81, {
+        operation: "procedure_pseudo_code",
+        requestId: 7,
+        providerState: "exited",
+      }),
+    );
+    expect(projected).toMatchObject({
+      code: "provider_unavailable",
+      retryable: true,
+      details: {
+        failure_code: "demo_session_expired",
+        exit_code: 81,
+        stage: "analysis",
+        retry_action: "restart_provider",
+        operation: "procedure_pseudo_code",
+      },
+    });
+    expect(projected.message).toContain("demo period");
+    expect(projected.message).toContain("open_binary");
+  });
 });
 
 describe("analysis error projection: retry guidance", () => {

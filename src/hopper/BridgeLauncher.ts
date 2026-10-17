@@ -39,7 +39,7 @@ import { retryLinuxHopperPublisherCleanup } from "../application/LinuxHopperPubl
 
 const execFileAsync = promisify(execFile);
 const HOPPER_BACKGROUND_STARTUP_MS = 5_000;
-/** Bounded wait for another REA session to release macOS Hopper. */
+/** Bounded wait for another REA session to release a Hopper application slot. */
 export const HOPPER_APPLICATION_LEASE_WAIT_MS = 30_000;
 const HOPPER_APPLICATION_LEASE_POLL_MS = 500;
 
@@ -98,6 +98,8 @@ interface SharedHopperApplicationLauncherOptions {
   readonly targetKind: "executable" | "database";
   readonly loaderArgs: readonly string[];
   readonly bridgeScriptPath: string;
+  /** Linux demo application slots shared by cooperating REA processes. */
+  readonly maxLinuxInstances?: number;
   readonly preparedImage?: {
     readonly image: MachOThinSlice;
     readonly sourceSha256: string;
@@ -124,7 +126,7 @@ export interface HopperApplicationLauncherDependencies {
   readonly acquireApplicationLease?: (input: {
     readonly runId: string;
   }) => ReturnType<typeof acquireMacHopperApplicationLease>;
-  /** macOS wait for a competing session before reporting its owner. */
+  /** Wait for a competing session before reporting its owner. */
   readonly applicationLeaseWaitMs?: number;
   readonly selectPrivateDisplay?: (options: {
     readonly environment: Readonly<NodeJS.ProcessEnv>;
@@ -372,19 +374,22 @@ export class HopperApplicationLauncher implements BridgeLauncher {
     const acquire =
       this.dependencies.acquireApplicationLease ??
       (linuxDemo
-        ? acquireLinuxHopperApplicationLease
+        ? (input: { readonly runId: string }) =>
+            acquireLinuxHopperApplicationLease({
+              ...input,
+              maxInstances: this.options.maxLinuxInstances ?? 1,
+            })
         : (input: { readonly runId: string }) =>
             acquireMacHopperApplicationLease({
               ...input,
               launcherPath: this.options.launcherPath,
             }));
-    // The Linux demo forwards a launch to its singleton immediately; keep its
-    // fail-fast contract. macOS sessions are commonly short CLI calls, so wait
-    // briefly for the current owner before reporting it.
-    const waitMs = linuxDemo
-      ? 0
-      : (this.dependencies.applicationLeaseWaitMs ??
-        HOPPER_APPLICATION_LEASE_WAIT_MS);
+    // Sessions are commonly short CLI calls, so wait briefly for a slot
+    // before reporting its current owner. Each Linux slot has a private
+    // TMPDIR, so a reserved slot can never forward into another owner.
+    const waitMs =
+      this.dependencies.applicationLeaseWaitMs ??
+      HOPPER_APPLICATION_LEASE_WAIT_MS;
     const waitStarted = Date.now();
     try {
       for (;;) {
@@ -424,7 +429,7 @@ export class HopperApplicationLauncher implements BridgeLauncher {
     return new HopperStartError({
       ownerRunId: owner.runId,
       userMessage: linuxDemo
-        ? `Linux Hopper is already active in REA session ${owner.runId}; it cannot open ${this.options.targetPath} in another session. This build forwards new launches to the existing application. Use the owning REA session to switch targets, or close it before retrying.`
+        ? `All ${String(this.options.maxLinuxInstances ?? 1)} Linux Hopper instance slot(s) are in use (for example by REA session ${owner.runId}, process ${owner.processId}); REA waited ${Math.round(waitedMs / 1_000)} s and did not open ${this.options.targetPath}. Retry after a session closes, send related queries through one MCP session, or raise REA_HOPPER_MAX_INSTANCES if the host has memory for more demo applications.`
         : `Hopper is already serving REA session ${owner.runId} (process ${owner.processId}); it cannot open ${this.options.targetPath} in another session. macOS Hopper runs one REA session at a time because each REA bridge occupies Hopper's single Python thread until its session closes. REA waited ${Math.round(waitedMs / 1_000)} s. Send related queries through one session (for example MCP open_binary followed by batch_decompile), or retry after that session closes.`,
     });
   }
