@@ -228,7 +228,9 @@ type CapabilityAvailability =
 export type CapabilityDescriptor = CapabilityAvailability & {
   /**
    * Snapshot opts immutable, profile-bound reads into replay despite incidental
-   * private filesystem writes. Live state must always be re-observed. Omitting
+   * private filesystem writes. It also declares that an omitted document
+   * selects the session's single analyzed program, so such reads replay without
+   * an explicit document. Live state must always be re-observed. Omitting
    * this policy retains conservative effect checks; mutation and UI-state
    * exclusions apply to every policy.
    */

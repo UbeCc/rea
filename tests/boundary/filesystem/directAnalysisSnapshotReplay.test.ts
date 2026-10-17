@@ -974,8 +974,10 @@ describe("workflow snapshot profile and cancellation binding", () => {
     expect(refreshed).toMatchObject({
       normalized_result: { document: "fixture" },
     });
+    // The workflow re-runs; its document-independent primitive reads replay
+    // from the same provider profile and only stateful reads reach the provider.
     expect(fixture.calls.toSorted()).toEqual(
-      [...operations, ...operations].toSorted(),
+      [...operations, "list_documents"].toSorted(),
     );
     expect(fixture.starts).toHaveLength(2);
   });
@@ -1024,4 +1026,43 @@ describe("workflow snapshot profile and cancellation binding", () => {
     expect(fixture.calls.toSorted()).toEqual(operations.toSorted());
     expect(fixture.starts).toHaveLength(1);
   });
+});
+
+it("replays a CLI decompile without an explicit document from a snapshot-policy provider", async () => {
+  const fixture = await createSnapshotReplayFixture("rea-omitted-document-");
+  const provider = fixture.createProvider({
+    supportedOperations: [...operations, "procedure_pseudo_code"],
+  });
+  const dependencies = fixture.dependencies(provider);
+  // The one-shot CLI exposes no document option; Ghidra binds the omission to
+  // its single imported Program.
+  const arguments_ = { procedure: "0x1000" };
+  const options = { snapshotPath: fixture.snapshotPath };
+  const first = parseEvidence(
+    await runDirectAnalysis(
+      dependencies,
+      fixture.path,
+      "procedure_pseudo_code",
+      arguments_,
+      options,
+    ),
+  );
+  const saved = await readAnalysisSnapshot(fixture.snapshotPath);
+  if (!saved.ok) throw saved.error;
+  expect(saved.value.entries).toHaveLength(1);
+  const starts = [...fixture.starts];
+  const calls = [...fixture.calls];
+
+  const replayed = parseEvidence(
+    await runDirectAnalysis(
+      dependencies,
+      fixture.path,
+      "procedure_pseudo_code",
+      arguments_,
+      options,
+    ),
+  );
+  expect(replayed.normalized_result).toEqual(first.normalized_result);
+  expect(fixture.starts).toEqual(starts);
+  expect(fixture.calls).toEqual(calls);
 });
