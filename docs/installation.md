@@ -1180,9 +1180,12 @@ REA creates the directory with mode `0700` and refuses one that is not a
 directory owned by the current user with no group or other permissions; the
 session then continues without the cache and reports why. Entries are
 immutable and appear atomically. Concurrent sessions of the same key wait for
-the first one to publish instead of analyzing again; a reservation whose
-process no longer runs, or that is older than the startup deadline, is
-ignored. Entries whose manifest or bytes do not verify are removed and the
+the first one to publish instead of analyzing again. That wait is excluded
+from the waiting session's own startup deadline, because the builder runs
+under its own; the restored or newly analyzed session reports the wait in its
+limitations. A reservation records its builder's PID and process start
+identity; it is ignored once that process no longer runs, the PID belongs to a
+different process, or the reservation is older than the startup deadline. Entries whose manifest or bytes do not verify are removed and the
 target is analyzed again. Least-recently-used entries are removed when the
 total exceeds `REA_GHIDRA_ANALYSIS_CACHE_MAX_BYTES`, and staging directories
 abandoned for more than a day are removed. Delete the directory to clear the
