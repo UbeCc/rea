@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
 import { chmod, rm, writeFile } from "node:fs/promises";
-import { basename, dirname, extname, join } from "node:path";
+import { dirname, join } from "node:path";
 import { promisify } from "node:util";
 
 import {
@@ -36,6 +36,7 @@ import {
 import type { HopperTargetLease } from "../process/HopperLease.js";
 import { HOPPER_SHUTDOWN_TIMEOUT_MS } from "./HopperSessionValues.js";
 import { verifyMacHopperNativeHelper } from "./HopperMacPublisher.js";
+import { macHopperApplicationExecutable } from "./HopperDemoSession.js";
 import { inspectLinuxHopperLauncher } from "../application/LinuxHopper.js";
 import { retryLinuxHopperPublisherCleanup } from "../application/LinuxHopperPublisher.js";
 
@@ -576,9 +577,9 @@ const prepareHopperApplication = async (
   environment: Readonly<NodeJS.ProcessEnv>,
   signal?: AbortSignal,
 ): Promise<boolean> => {
-  const appBundle = hopperApplicationBundle(launcherPath);
-  if (appBundle === undefined) return signal?.aborted !== true;
-  const executablePath = join(appBundle, "Contents/MacOS/Hopper Disassembler");
+  const executablePath = macHopperApplicationExecutable(launcherPath);
+  if (executablePath === undefined) return signal?.aborted !== true;
+  const appBundle = dirname(dirname(dirname(executablePath)));
   if (await processIsRunning(executablePath, environment))
     return signal?.aborted !== true;
   // This reduces activation when Hopper is cold, but the vendor launcher that
@@ -592,12 +593,6 @@ const prepareHopperApplication = async (
     (await waitForAbortableDelay(HOPPER_BACKGROUND_STARTUP_MS, signal)) ===
     "elapsed"
   );
-};
-
-const hopperApplicationBundle = (launcherPath: string): string | undefined => {
-  if (basename(launcherPath) !== "hopper") return undefined;
-  const candidate = dirname(dirname(dirname(launcherPath)));
-  return extname(candidate) === ".app" ? candidate : undefined;
 };
 
 const processIsRunning = async (

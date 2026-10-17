@@ -32,6 +32,7 @@ import {
 import { mapHopperFileOffset } from "./HopperFileOffset.js";
 import { HopperRegexSearch } from "./HopperRegexSearch.js";
 import { HopperClient } from "./HopperClient.js";
+import { withHopperDemoStallHint } from "./HopperDemoSession.js";
 import { hopperMachOImageSchema } from "./HopperMachOImage.js";
 
 import {
@@ -307,12 +308,20 @@ export class HopperProvider implements AnalysisProviderCandidate {
       });
     return {
       execute: async (operation, parameters, options) => {
-        const result =
+        const result = await withHopperDemoStallHint(
           (operation === "search_strings" ||
             operation === "search_procedures") &&
-          parameters.mode === "regex"
-            ? await regexSearch.execute(operation, parameters, options)
-            : await client.callTool(operation, parameters, options);
+            parameters.mode === "regex"
+            ? regexSearch.execute(operation, parameters, options)
+            : client.callTool(operation, parameters, options),
+          {
+            launcherPath: this.config.hopperLauncherPath,
+            environment: this.environment,
+            logger: this.logger,
+            operation,
+            platform: this.platform,
+          },
+        );
         if (!result.ok) return result;
         const mapped =
           operation === "address_to_file_offset"

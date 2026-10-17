@@ -680,6 +680,17 @@ bridge readiness, check Hopper for a pending demo, license, or loader dialog.
 Complete the dialog and retry. If REA reports `cleanup_incomplete`, follow the
 retained-resource guidance below before reopening the target.
 
+The macOS Hopper demo ends each application session after about 30 minutes
+with a modal `Demo period has expired.` alert. Because REA reuses the running
+Hopper application, later calls then wait on that alert instead of failing.
+When a Hopper call is still pending after 30 seconds and the application has
+run for at least 30 minutes, REA logs a warning on stderr naming this cause.
+REA cannot read the license kind, so licensed users can ignore the warning.
+Dismiss the alert or quit Hopper (for example
+`pkill -x 'Hopper Disassembler'`); the next REA call relaunches it. On Linux,
+REA starts a private Hopper process for each session, so only sessions that stay
+open past the demo period are affected.
+
 On macOS, Hopper can show an `Executing Python Script...` overlay while the REA
 bridge serves an active MCP connection. Long-lived MCP clients can keep that
 connection open across agent turns, so the overlay may remain visible after the
