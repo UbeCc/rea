@@ -105,6 +105,7 @@ rea analyze /absolute/path/to/program --provider ghidra --json
 rea search /absolute/path/to/program "search" --provider ghidra --json
 rea function /absolute/path/to/program main --provider ghidra --json
 rea decompile /absolute/path/to/program 0x1000 --provider ghidra --json
+rea batch-decompile /absolute/path/to/program 0x1000 0x1040 --provider ghidra --json
 rea xrefs /absolute/path/to/program 0x1000 --provider ghidra --json
 rea trace /absolute/path/to/program "search" --provider ghidra --json
 ```
@@ -203,8 +204,14 @@ procedure queries replay without an explicit document; other providers
 replay document-scoped queries only when the document is named. A snapshot
 stores results, not the provider database: a new procedure or other uncached
 query starts the provider and repeats its import and analysis. To decompile
-many procedures, keep one MCP session open and call `batch_decompile`, or
-successive procedure tools, against the opened target.
+many procedures in one command, use `rea batch-decompile PATH PROC...`
+(repeat `--procedure=<value>` for names that begin with `-`); it opens the
+target once and returns the MCP `batch_decompile` result, with a status and
+error for each item. Interactive work can keep one MCP session open and call
+`batch_decompile` or successive procedure tools against the opened target.
+With Ghidra on Linux or macOS, `REA_GHIDRA_ANALYSIS_CACHE_DIR` additionally
+reuses the analyzed Program across processes; see
+[Ghidra persistent analysis cache](installation.md#ghidra-persistent-analysis-cache).
 On Windows, Ghidra first admits the selected source through its native snapshot
 owner, so replay can start that provider.
 In MCP, `open_binary` accepts `snapshot_path` to import a snapshot atomically

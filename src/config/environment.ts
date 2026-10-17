@@ -20,6 +20,14 @@ import { mcpOutputSchemaProfileSchema } from "./mcpOutputSchemaProfile.js";
 import { mcpResponseBudgetSchema } from "./mcpResponseBudget.js";
 import { parseLoaderArgs, parseStringArray } from "./parsers.js";
 
+/** Positive decimal integer settings with an explicit resource ceiling. */
+const positiveIntegerSettingSchema = (maximum: number) =>
+  z
+    .string()
+    .regex(/^[1-9]\d*$/u, "must be a positive decimal integer")
+    .transform(Number)
+    .pipe(z.number().int().min(1).max(maximum));
+
 const environmentSchema = z.object({
   REA_ANALYSIS_PROVIDER: analysisProviderSelectorSchema.default("auto"),
   REA_MCP_MAX_RESPONSE_BYTES: mcpResponseBudgetSchema.optional(),
@@ -55,6 +63,16 @@ const environmentSchema = z.object({
   REA_SWIFTC_COMPILE_TIMEOUT_MS: providerStartupTimeoutSchema.default(
     DEFAULT_SWIFTC_COMPILE_TIMEOUT_MS,
   ),
+  REA_GHIDRA_ANALYSIS_CACHE_DIR: z
+    .string()
+    .min(1)
+    .refine(isAbsolute, "REA_GHIDRA_ANALYSIS_CACHE_DIR must be absolute")
+    .optional(),
+  REA_GHIDRA_ANALYSIS_CACHE_MAX_BYTES: positiveIntegerSettingSchema(
+    Number.MAX_SAFE_INTEGER,
+  ).optional(),
+  REA_GHIDRA_MAX_CPU: positiveIntegerSettingSchema(4096).optional(),
+  REA_GHIDRA_JVM_GC_THREADS: positiveIntegerSettingSchema(1024).optional(),
   REA_GHIDRA_LANGUAGE_ID: ghidraLanguageIdSchema.optional(),
   REA_GHIDRA_COMPILER_SPEC_ID: ghidraCompilerSpecIdSchema.optional(),
   REA_GHIDRA_DISABLED_ANALYZERS: ghidraDisabledAnalyzersSchema.optional(),

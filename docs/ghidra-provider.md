@@ -4,6 +4,10 @@ REA imports one target into an ephemeral Ghidra database. Linux/macOS support
 read-only analysis and atomic function-name/entry-comment edits; Windows P0 is
 read-only. GUI controls and persistent database mutation are unavailable.
 Executable bytes remain unchanged.
+With the opt-in [persistent analysis cache](installation.md#ghidra-persistent-analysis-cache),
+a session may start from a packed copy of a previously analyzed Program with the
+same key instead of importing and analyzing again; the session database remains
+ephemeral and its edits are never written back to the cache.
 
 Use [installation](installation.md#ghidra) for supported hosts, prerequisites,
 configuration, startup deadlines, resource controls, and cleanup recovery.

@@ -1,4 +1,5 @@
 import type { MachOThinSlice } from "../artifacts/apple/MachOThinSlice.js";
+import type { GhidraAnalysisCache } from "./GhidraAnalysisCache.js";
 import type { Logger } from "pino";
 import type { Result } from "../domain/result.js";
 import type { GhidraLauncher } from "./GhidraLauncher.js";
@@ -50,6 +51,36 @@ export interface GhidraClientOptions {
   readonly expectedLanguageId?: string;
   readonly expectedCompilerSpecId?: string;
   readonly startupTimeoutMs?: number;
+  /** Opt-in persistent analysis cache and the installation facts it binds. */
+  readonly analysisCache?: GhidraClientAnalysisCache;
   readonly onDiagnostic?: (event: GhidraDiagnostic) => void;
   readonly logger?: Logger;
 }
+
+/** Cache owner plus the launch facts that are not in the analysis profile. */
+export interface GhidraClientAnalysisCache {
+  readonly cache: GhidraAnalysisCache;
+  /** Real path of the selected analyzeHeadless launcher. */
+  readonly installation: string;
+  readonly bridgeDirectory: string;
+  readonly bridgeSources: readonly string[];
+}
+
+/** What the persistent analysis cache contributed to the current session. */
+export type GhidraAnalysisCacheObservation =
+  | {
+      readonly status: "restored";
+      readonly key: string;
+      readonly created_at: string;
+      readonly analysis_ms: number | null;
+      readonly waited_for_builder: boolean;
+    }
+  | {
+      readonly status:
+        | "stored"
+        | "already-present"
+        | "not-produced"
+        | "over-budget";
+      readonly key: string;
+    }
+  | { readonly status: "unavailable"; readonly reason: string };

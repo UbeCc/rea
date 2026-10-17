@@ -68,6 +68,14 @@ export interface GhidraLaunchSession {
   readonly loadedImage?: GhidraLoadedImage;
   readonly providerVersion: string;
   readonly profileDigest: string;
+  /**
+   * Persistent analysis cache role for this launch: restore imports a verified
+   * private packed Program without re-running analysis or import scripts;
+   * store asks the bridge to pack the analyzed Program into a staging file.
+   */
+  readonly analysisCache?:
+    | { readonly kind: "restore"; readonly programPath: string }
+    | { readonly kind: "store"; readonly outputPath: string };
 }
 
 /** Process plus private log coordinates returned by a Ghidra launcher. */
@@ -244,6 +252,10 @@ export interface GhidraHeadlessLauncherOptions {
   readonly pspExtension?: GhidraPspExtension;
   /** Remap typed float storage for the soft-float o32 ABI after analysis. */
   readonly mipsSoftFloat?: true;
+  /** Ghidra `-max-cpu` bound for analysis workers (REA_GHIDRA_MAX_CPU). */
+  readonly maxCpu?: number;
+  /** JVM GC worker count (REA_GHIDRA_JVM_GC_THREADS). */
+  readonly jvmGcThreads?: number;
   /** Spawn seam for provider-boundary lifecycle tests. */
   readonly spawnProcess?: typeof spawnOwnedProviderProcess;
   /** LaunchSupport probe seam for Java-free launcher fixtures. */
@@ -320,15 +332,24 @@ export class GhidraHeadlessLauncher implements GhidraLauncher {
       );
       let seedPath: string | undefined;
       let extensions: readonly GhidraExtension[] = [];
+      const restoreProgram =
+        session.analysisCache?.kind === "restore"
+          ? session.analysisCache.programPath
+          : undefined;
       if (
-        this.options.analysisSeeds !== undefined ||
+        (restoreProgram === undefined &&
+          this.options.analysisSeeds !== undefined) ||
         (this.options.analysisExtensions?.length ?? 0) > 0
       ) {
         if (options.resourceScope === undefined)
           throw new GhidraLaunchError(
             "Configured Ghidra artifacts require a caller-owned resource scope.",
           );
-        if (this.options.analysisSeeds !== undefined)
+        // A restored Program already carries its applied seed report.
+        if (
+          restoreProgram === undefined &&
+          this.options.analysisSeeds !== undefined
+        )
           seedPath = await snapshotGhidraAnalysisSeeds(
             this.options.analysisSeeds,
             session.runtimeRoot,
@@ -361,6 +382,9 @@ export class GhidraHeadlessLauncher implements GhidraLauncher {
               }),
           provider_version: session.providerVersion,
           profile_digest: session.profileDigest,
+          ...(session.analysisCache?.kind === "store"
+            ? { analysis_cache_output: session.analysisCache.outputPath }
+            : {}),
           ...(extensions.length === 0
             ? {}
             : { analysis_extensions: extensions }),
@@ -381,6 +405,10 @@ export class GhidraHeadlessLauncher implements GhidraLauncher {
           : { mipsSoftFloat: this.options.mipsSoftFloat }),
         projectRoot: paths.projectRoot,
         targetPath: session.targetPath,
+        ...(restoreProgram === undefined ? {} : { restoreProgram }),
+        ...(this.options.maxCpu === undefined
+          ? {}
+          : { maxCpu: this.options.maxCpu }),
         bridgeScriptPath: this.options.bridgeScriptPath,
         descriptorPath: paths.descriptorPath,
         ghidraLogPath: paths.ghidraLogPath,
@@ -437,6 +465,9 @@ export class GhidraHeadlessLauncher implements GhidraLauncher {
         tempRoot: paths.tempRoot,
         arguments: headlessArguments,
         environment,
+        ...(this.options.jvmGcThreads === undefined
+          ? {}
+          : { gcThreads: this.options.jvmGcThreads }),
         onStderr: (mode, stderr) => {
           if (stderr === "") return;
           const bytes = Buffer.byteLength(stderr);
@@ -687,6 +718,13 @@ export interface GhidraHeadlessArgumentOptions {
   readonly platform?: NodeJS.Platform;
   readonly projectRoot: string;
   readonly targetPath: string;
+  /**
+   * Verified packed Program restored from the analysis cache. Import scripts,
+   * auto-analysis and post-analysis repairs already ran when it was stored.
+   */
+  readonly restoreProgram?: string;
+  /** Ghidra `-max-cpu` analysis worker bound; Ghidra's default when absent. */
+  readonly maxCpu?: number;
   readonly bridgeScriptPath: string;
   readonly descriptorPath: string;
   readonly ghidraLogPath: string;
@@ -759,6 +797,33 @@ export const ghidraHeadlessArguments = (
     throw new Error(
       "A raw-binary import cannot be combined with a DOS import.",
     );
+  const common = [
+    "-readOnly",
+    "-deleteProject",
+    ...(options.maxCpu === undefined
+      ? []
+      : ["-max-cpu", String(options.maxCpu)]),
+    "-log",
+    options.ghidraLogPath,
+    "-scriptlog",
+    options.scriptLogPath,
+    "-scriptPath",
+    bridgeDirectory,
+  ];
+  if (options.restoreProgram !== undefined)
+    return [
+      options.projectRoot,
+      "rea-project",
+      "-import",
+      options.restoreProgram,
+      "-loader",
+      "GzfLoader",
+      "-noanalysis",
+      ...common,
+      "-postScript",
+      options.bridgeScriptPath,
+      options.descriptorPath,
+    ];
   return [
     options.projectRoot,
     "rea-project",
@@ -813,14 +878,7 @@ export const ghidraHeadlessArguments = (
               "-cspec",
               rawBinary.compilerSpecId,
             ]),
-    "-readOnly",
-    "-deleteProject",
-    "-log",
-    options.ghidraLogPath,
-    "-scriptlog",
-    options.scriptLogPath,
-    "-scriptPath",
-    bridgeDirectory,
+    ...common,
     ...(options.dosCom === true
       ? [
           "-preScript",

@@ -47,7 +47,10 @@ import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { err, ok, type Result } from "../domain/result.js";
 import type { Logger } from "pino";
 import { GhidraClient } from "./GhidraClient.js";
-import type { GhidraClientOptions } from "./GhidraClientTypes.js";
+import type {
+  GhidraAnalysisCacheObservation,
+  GhidraClientOptions,
+} from "./GhidraClientTypes.js";
 import {
   isGhidraFunctionOperation,
   parseGhidraFunctionInput,
@@ -79,6 +82,9 @@ import { ghidraRiscvLimitations } from "./GhidraRiscvProfile.js";
 import { ghidraPePdbLimitations } from "./GhidraPeProfile.js";
 import { unverifiedGhidraBuildLimitation } from "./GhidraReleasePolicy.js";
 import { GhidraHeadlessLauncher } from "./GhidraLauncher.js";
+import { GhidraAnalysisCache } from "./GhidraAnalysisCache.js";
+import { compactGhidraFailureDiagnostics } from "./GhidraDiagnosticLog.js";
+import { dirname } from "node:path";
 import { attestGhidraNativeLoadImage } from "./GhidraLoadImageAttest.js";
 import {
   NATIVE_AOT_MAX_REPORT_BYTES,
@@ -109,6 +115,38 @@ import {
 import { inspectWindowsNativeReadiness } from "../process/WindowsAuthority.js";
 import { ghidraRawBinaryLanguage } from "./GhidraRawBinaryLanguage.js";
 
+/** Provenance for a session whose Program came from the persistent cache. */
+export const ghidraAnalysisCacheLimitations = (
+  observation: GhidraAnalysisCacheObservation | undefined,
+): readonly string[] =>
+  observation?.status === "restored"
+    ? [
+        `Ghidra restored this Program from persistent analysis cache entry ${observation.key.slice(0, 16)} (created ${observation.created_at}); import, auto-analysis and REA's post-analysis repairs ran when that entry was stored, not in this session. The entry is bound to the imported-byte SHA-256, analysis profile digest, Ghidra installation and bridge sources.`,
+      ]
+    : observation?.status === "unavailable"
+      ? [
+          `The configured Ghidra analysis cache was not used for this session: ${observation.reason}`,
+        ]
+      : [];
+
+/** One cache owner per directory and budget for this process. */
+const analysisCaches = new Map<string, GhidraAnalysisCache>();
+const ghidraAnalysisCache = (
+  directory: string,
+  maxBytes: number | undefined,
+): GhidraAnalysisCache => {
+  const key = `${directory}\0${String(maxBytes)}`;
+  let cache = analysisCaches.get(key);
+  if (cache === undefined) {
+    cache = new GhidraAnalysisCache({
+      directory,
+      ...(maxBytes === undefined ? {} : { maxBytes }),
+    });
+    analysisCaches.set(key, cache);
+  }
+  return cache;
+};
+
 /** Production seam for exercising provider projection without a real process. */
 export type GhidraProviderClientFactory = (
   options: GhidraClientOptions,
@@ -121,6 +159,7 @@ export type GhidraProviderClientFactory = (
       | "runtimeLineage"
       | "readTargetSnapshot"
       | "hashTargetSnapshot"
+      | "analysisCacheObservation"
     >
   >;
 
@@ -605,9 +644,29 @@ export const createGhidraProviderClient = (input: {
         diagnostics: ghidraInstallationDiagnostics(installation),
       }),
     );
+  const bridgeScriptPath = fileURLToPath(
+    new URL(
+      `../../bridge/ghidra/${GHIDRA_BRIDGE_SOURCES.bridge}`,
+      import.meta.url,
+    ),
+  );
   const client = clientFactory({
     startupTimeoutMs: config.ghidraStartupTimeoutMs,
     platform: installation.platform,
+    ...(config.ghidraAnalysisCacheDirectory === undefined ||
+    installation.platform === "win32"
+      ? {}
+      : {
+          analysisCache: {
+            cache: ghidraAnalysisCache(
+              config.ghidraAnalysisCacheDirectory,
+              config.ghidraAnalysisCacheMaxBytes,
+            ),
+            installation: prerequisites.value.analyzeHeadlessPath,
+            bridgeDirectory: dirname(bridgeScriptPath),
+            bridgeSources: Object.values(GHIDRA_BRIDGE_SOURCES),
+          },
+        }),
     launcher: new GhidraHeadlessLauncher({
       environment: input.environment,
       analyzeHeadlessPath: prerequisites.value.analyzeHeadlessPath,
@@ -617,12 +676,13 @@ export const createGhidraProviderClient = (input: {
       ...(installation.javaVmName === undefined
         ? {}
         : { javaVmName: installation.javaVmName }),
-      bridgeScriptPath: fileURLToPath(
-        new URL(
-          `../../bridge/ghidra/${GHIDRA_BRIDGE_SOURCES.bridge}`,
-          import.meta.url,
-        ),
-      ),
+      bridgeScriptPath,
+      ...(config.ghidraMaxCpu === undefined
+        ? {}
+        : { maxCpu: config.ghidraMaxCpu }),
+      ...(config.ghidraJvmGcThreads === undefined
+        ? {}
+        : { jvmGcThreads: config.ghidraJvmGcThreads }),
       ...(pspExtension?.success === true
         ? { pspExtension: pspExtension.data }
         : {}),
@@ -748,6 +808,7 @@ export const createGhidraProviderClient = (input: {
     prerequisites.value.providerVersion,
   );
   const sessionLimitations = (): readonly string[] => [
+    ...ghidraAnalysisCacheLimitations(client.analysisCacheObservation?.()),
     ...providerLimitations,
     ...targetLimitations,
     ...(psp ? GHIDRA_PSP_LIMITATIONS : []),
@@ -1124,13 +1185,29 @@ const projectSessionError = (
       ).bindCleanupDependencies([primary, failure.cleanupFailure]);
 };
 
+/** One compacted projection (and full-output file) per session failure. */
+const compactedDiagnostics = new WeakMap<
+  GhidraSessionError,
+  Readonly<Record<string, JsonValue>>
+>();
+const compactDiagnostics = (
+  failure: GhidraSessionError,
+): Readonly<Record<string, JsonValue>> => {
+  let compacted = compactedDiagnostics.get(failure);
+  if (compacted === undefined) {
+    compacted = compactGhidraFailureDiagnostics(failure.diagnostics);
+    compactedDiagnostics.set(failure, compacted);
+  }
+  return compacted;
+};
+
 const projectPrimarySessionError = (
   operation: AnalysisOperation,
   failure: GhidraSessionError,
   startupTimeoutMs: number,
   health?: ProviderOperationHealth,
 ): AnalysisError => {
-  const context = { cause: failure, diagnostics: failure.diagnostics };
+  const context = { cause: failure, diagnostics: compactDiagnostics(failure) };
   const physicalCause = artifactFilePrimaryFailure(failure.cause);
   if (physicalCause instanceof AnalysisAccessDeniedError)
     return new AnalysisAccessDeniedError(
@@ -1314,7 +1391,7 @@ const projectObservedJvmMemoryFailure = (
 /** Name the settings that change Ghidra's import-and-analysis startup deadline. */
 const ghidraStartupTimeoutGuidance = (timeoutMs: number) => ({
   userMessage: `Ghidra did not finish importing and analyzing the target within its ${String(timeoutMs)} ms startup deadline (REA_GHIDRA_STARTUP_TIMEOUT_MS).`,
-  remediationAction: `Large binaries can need longer: set REA_GHIDRA_STARTUP_TIMEOUT_MS above ${String(timeoutMs)} in the environment that starts REA, or skip expensive analyzers with REA_GHIDRA_DISABLED_ANALYZERS, then open the target again. An MCP client's own tool-call timeout is separate and may also need raising.`,
+  remediationAction: `Large binaries can need longer: set REA_GHIDRA_STARTUP_TIMEOUT_MS above ${String(timeoutMs)} in the environment that starts REA, or skip expensive analyzers with REA_GHIDRA_DISABLED_ANALYZERS, then open the target again. On Linux and macOS, setting REA_GHIDRA_ANALYSIS_CACHE_DIR lets later sessions on the same target reuse a completed analysis. An MCP client's own tool-call timeout is separate and may also need raising.`,
 });
 
 /** A provider already observed as running can be restarted by reopening. */
