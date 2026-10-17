@@ -84,9 +84,9 @@ export const addNativeBridgeBoundaries = (
         relation:
           call.operation === "register-handler"
             ? "handles"
-            : call.operation === "call-handler"
-              ? "invokes"
-              : "sends",
+            : call.operation === "post-message"
+              ? "sends"
+              : "invokes",
         properties,
         evidence,
       });
@@ -132,6 +132,7 @@ export const summarizeNativeBridges = (
       .length,
     webkit_message_handler_posts: count("post-message"),
     bridge_handler_calls: count("call-handler"),
+    bridge_sync_calls: count("call-sync"),
     bridge_handler_registrations: count("register-handler"),
     channels: [...channels.entries()]
       .sort(([left], [right]) => compareUnicodeCodePoints(left, right))

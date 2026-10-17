@@ -130,12 +130,16 @@ export type JavaScriptNativeBridgeKind =
 /**
  * A statically spelled call into a WebView-to-native message bridge. The
  * receiver is matched by spelling only: `*.webkit.messageHandlers.NAME.postMessage`
- * or a `callHandler`/`registerHandler` member call as used by
+ * or a `callHandler`/`callSync`/`registerHandler` member call as used by
  * WebViewJavascriptBridge-style libraries. Neither proves the embedder.
  */
 export type JavaScriptNativeBridgeCall = {
   readonly bridge: JavaScriptNativeBridgeKind;
-  readonly operation: "post-message" | "call-handler" | "register-handler";
+  readonly operation:
+    | "post-message"
+    | "call-handler"
+    | "call-sync"
+    | "register-handler";
   readonly mechanism: string;
   readonly module_key: string | null;
   /** Recovered factory runtime; absent in older or unbundled findings. */

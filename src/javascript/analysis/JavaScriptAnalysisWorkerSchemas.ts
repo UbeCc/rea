@@ -55,7 +55,12 @@ const nativeBridgeCall = {
   ...findingContext,
   module_runtime: z.string().exactOptional(),
   bridge: z.enum(["webkit-message-handler", "webview-javascript-bridge"]),
-  operation: z.enum(["post-message", "call-handler", "register-handler"]),
+  operation: z.enum([
+    "post-message",
+    "call-handler",
+    "call-sync",
+    "register-handler",
+  ]),
   mechanism: z.string(),
 };
 const nullHandler = { handler_kind: z.null(), handler_location: z.null() };
