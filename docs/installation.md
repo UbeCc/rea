@@ -955,6 +955,12 @@ empty, invalid or out-of-range supplied values fail configuration validation.
 When the deadline elapses, the `provider_timeout` error names
 `REA_GHIDRA_STARTUP_TIMEOUT_MS` with the deadline that was applied and suggests
 `REA_GHIDRA_DISABLED_ANALYZERS` for analyzers that dominate the time.
+Ghidra failures carry at most a 2 KiB tail of the failing operation's output
+and a 512-byte tail of earlier process output inline; byte counts describe the
+complete streams. When output was shortened, `full_output_path` names an
+owner-only file with the complete redacted output under the temporary
+directory's `rea-ghidra-logs-<uid>` directory, which keeps at most 64 files for
+up to seven days.
 REA parses the supplied configuration environment and
 passes the deadline to each provider client; a startup failure is returned by the query that triggered it,
 without exposing partial analysis. This deadline is separate from MCP transport
@@ -1108,11 +1114,17 @@ settings above instead of adding a second `-Xmx` through an injection variable.
 
 The Linux/macOS launch sets `-XX:ParallelGCThreads=2` and
 `-XX:CICompilerCount=2`; the supported Windows headless script also sets these
-counts. These constrain particular JVM thread pools, not all analysis threads
-or CPU usage. REA does not pass Ghidra's `-max-cpu` option or expose a general
-Ghidra CPU limit. When needed, apply host CPU affinity and scheduling controls
-to the REA process and verify the resulting JVM's affinity. Select CPUs allowed
-on the host; do not assume CPU numbers from another machine are valid.
+counts. On Linux and macOS, `REA_GHIDRA_JVM_GC_THREADS` (1–1024) replaces the
+GC thread count, and `REA_GHIDRA_MAX_CPU` (1–4096) passes Ghidra's `-max-cpu`
+bound for its analysis worker pools; without it Ghidra sizes those pools from
+the visible processors. These constrain particular thread pools, not all
+analysis threads or CPU usage, and are not part of the analysis profile. On a
+large shared host, many concurrent sessions benefit more from the
+[persistent analysis cache](#ghidra-persistent-analysis-cache) than from larger
+per-JVM pools: auto-analysis of one Program is largely sequential. When needed,
+apply host CPU affinity and scheduling controls to the REA process and verify
+the resulting JVM's affinity. Select CPUs allowed on the host; do not assume CPU
+numbers from another machine are valid.
 
 Verify controls at their consumer after the first Ghidra-backed query starts
 the JVM: inspect that owned JVM's effective `-Xmx` and GC/compiler flags, CPU
@@ -1125,6 +1137,42 @@ copying full command lines or environments into reports. Heap and affinity
 settings affect cost and latency; they are not part of REA's semantic analysis
 profile identity. See [real-provider testing](testing.md) for bounded
 verification workflows.
+
+### Ghidra persistent analysis cache
+
+By default every session imports and auto-analyzes the target again, so each
+one-shot CLI command pays the full analysis time. On Linux and macOS, set an
+absolute owner-only directory to reuse analyzed Programs across processes:
+
+```bash
+export REA_GHIDRA_ANALYSIS_CACHE_DIR=/absolute/private/rea-ghidra-cache
+export REA_GHIDRA_ANALYSIS_CACHE_MAX_BYTES=21474836480   # optional; 20 GiB default
+```
+
+After import, default auto-analysis and REA's post-analysis repairs complete,
+and before any request or edit, the bridge packs the Program (a Ghidra GZF)
+into a private staging directory. REA publishes it only after the session
+handshake reports complete analysis. A later session whose key matches copies
+the entry into its own private runtime, verifies the recorded SHA-256 while
+copying, and imports it with auto-analysis disabled. The key covers the
+imported-byte SHA-256 (the selected slice for universal Mach-O), the analysis
+profile digest (loader, language, disabled analyzers, seeds, repairs and
+slice), the Ghidra version, the analyzeHeadless path, the packaged bridge and
+analysis script sources, and the Program name. Any change selects a new entry.
+Edits made in a session are never written back. Results from a restored
+Program carry a limitation naming the entry and the time it was created.
+
+REA creates the directory with mode `0700` and refuses one that is not a
+directory owned by the current user with no group or other permissions; the
+session then continues without the cache and reports why. Entries are
+immutable and appear atomically. Concurrent sessions of the same key wait for
+the first one to publish instead of analyzing again; a reservation whose
+process no longer runs, or that is older than the startup deadline, is
+ignored. Entries whose manifest or bytes do not verify are removed and the
+target is analyzed again. Least-recently-used entries are removed when the
+total exceeds `REA_GHIDRA_ANALYSIS_CACHE_MAX_BYTES`, and staging directories
+abandoned for more than a day are removed. Delete the directory to clear the
+cache. Windows P0 does not use it.
 
 ### Ghidra diagnostics and verification
 

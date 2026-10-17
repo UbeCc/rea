@@ -83,6 +83,8 @@ export const ghidraJavaLaunch = async (options: {
   readonly tempRoot: string;
   readonly arguments: readonly string[];
   readonly environment: NodeJS.ProcessEnv;
+  /** JVM GC worker count (REA_GHIDRA_JVM_GC_THREADS); 2 when absent. */
+  readonly gcThreads?: number;
   readonly signal?: AbortSignal;
   readonly onStderr: (mode: "-envvars" | "-vmargs", stderr: string) => void;
 }): Promise<{
@@ -187,7 +189,7 @@ export const ghidraJavaLaunch = async (options: {
       ...vmArguments,
       ...(options.platform === "darwin" ? ["-Xdock:name=Ghidra-Headless"] : []),
       `-Xmx${configuredMaxHeap}`,
-      "-XX:ParallelGCThreads=2",
+      `-XX:ParallelGCThreads=${String(options.gcThreads ?? 2)}`,
       "-XX:CICompilerCount=2",
       "-Djava.awt.headless=true",
       ...isolatedProperties,

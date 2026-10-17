@@ -33,10 +33,18 @@ import {
 } from "../process/ProviderProcess.js";
 import { DEFAULT_GHIDRA_STARTUP_TIMEOUT_MS } from "../config/providerStartupTimeout.js";
 import type {
+  GhidraAnalysisCacheObservation,
   GhidraClientOptions,
   GhidraRequestOptions,
   GhidraStartResult,
 } from "./GhidraClientTypes.js";
+import {
+  ghidraBridgeSourcesDigest,
+  type GhidraAnalysisCacheBuildLease,
+  type GhidraAnalysisCacheIdentity,
+  type GhidraAnalysisCacheStaging,
+} from "./GhidraAnalysisCache.js";
+import { basename, join } from "node:path";
 import type { GhidraInventoryOperation } from "./GhidraInventoryValues.js";
 import type { GhidraFunctionOperation } from "./GhidraFunctionValues.js";
 import {
@@ -44,7 +52,11 @@ import {
   ghidraDiagnosticStream,
   GHIDRA_PROCESS_DIAGNOSTIC_BYTES,
 } from "./GhidraDiagnostics.js";
-import { GhidraLaunchError, type GhidraLaunch } from "./GhidraLauncher.js";
+import {
+  GhidraLaunchError,
+  type GhidraLaunch,
+  type GhidraLaunchSession,
+} from "./GhidraLauncher.js";
 import { GhidraResponseBuffer } from "./GhidraResponseBuffer.js";
 import { GhidraResponseRouter } from "./GhidraResponseRouter.js";
 import { GhidraRequestQueue } from "./GhidraRequestQueue.js";
@@ -142,6 +154,9 @@ export class GhidraClient {
   #lastDiagnostics: Readonly<Record<string, JsonValue>> = {};
   #startupAttempt: GhidraStartupAttempt | undefined;
   #closePromise: Promise<void> | undefined;
+  #cacheStaging: GhidraAnalysisCacheStaging | undefined;
+  #cacheLease: GhidraAnalysisCacheBuildLease | undefined;
+  #cacheObservation: GhidraAnalysisCacheObservation | undefined;
   readonly #failure = bindGhidraSessionFailure(
     () => this.#diagnostics(),
     (value, incomplete) => this.#redactAuthentication(value, incomplete),
@@ -764,6 +779,15 @@ export class GhidraClient {
       return this.#startupFailure(failure);
     }
     if (deadline.signal.aborted) return this.#startupInterrupted(deadline);
+    let analysisCache: GhidraLaunchSession["analysisCache"];
+    try {
+      analysisCache = await this.#planAnalysisCache(deadline.signal);
+    } catch (cause: unknown) {
+      if (deadline.signal.aborted) return this.#startupInterrupted(deadline);
+      throw cause;
+    }
+    if (deadline.signal.aborted) return this.#startupInterrupted(deadline);
+    const launchedAt = performance.now();
     this.#token = randomBytes(32).toString("hex");
     this.#authenticationTokens.add(this.#token);
     this.#lineage.reset();
@@ -783,6 +807,7 @@ export class GhidraClient {
             : { loadedImage: this.#loadedImage }),
           providerVersion: this.#options.providerVersion,
           profileDigest: this.#options.profileDigest,
+          ...(analysisCache === undefined ? {} : { analysisCache }),
         },
         { signal: deadline.signal, resourceScope: this.#fileResources },
       )
@@ -839,9 +864,163 @@ export class GhidraClient {
       );
     }
     if (deadline.signal.aborted) return this.#startupInterrupted(deadline);
+    await this.#publishAnalysisCache(
+      completed.value.analysis_complete,
+      Math.round(performance.now() - launchedAt),
+    );
     this.#startupOutputCheckpoint = undefined;
     this.#requestQueue.reopen();
     return completed;
+  }
+
+  /** What the persistent analysis cache contributed to this session. */
+  analysisCacheObservation(): GhidraAnalysisCacheObservation | undefined {
+    return this.#cacheObservation;
+  }
+
+  /**
+   * Restore a verified cached Program into the runtime root, or stage a new
+   * entry. Cache faults never fail the session; they are observed instead.
+   * Only cancellation propagates.
+   */
+  async #planAnalysisCache(
+    signal: AbortSignal,
+  ): Promise<GhidraLaunchSession["analysisCache"]> {
+    this.#cacheObservation = undefined;
+    const configured = this.#options.analysisCache;
+    const runtimeRoot = this.#runtimeRoot;
+    const snapshotPath = this.#snapshotPath;
+    if (
+      configured === undefined ||
+      runtimeRoot === undefined ||
+      snapshotPath === undefined ||
+      this.#options.platform === "win32"
+    )
+      return undefined;
+    try {
+      const identity: GhidraAnalysisCacheIdentity = {
+        provider_version: this.#options.providerVersion,
+        profile_digest: this.#options.profileDigest,
+        imported_sha256:
+          this.#loadedImage?.sha256 ?? this.#options.targetSha256,
+        program_name: basename(snapshotPath),
+        installation: configured.installation,
+        bridge_sources_sha256: await ghidraBridgeSourcesDigest(
+          configured.bridgeDirectory,
+          configured.bridgeSources,
+        ),
+      };
+      const destination = join(
+        runtimeRoot.path,
+        `${basename(snapshotPath)}.gzf`,
+      );
+      const { cache } = configured;
+      const staleAfterMs = this.#options.startupTimeoutMs;
+      let waited = false;
+      let hit = await cache.restore(identity, destination, signal);
+      if (hit === undefined) {
+        this.#cacheLease = await cache.tryReserveBuild(identity, staleAfterMs);
+        if (this.#cacheLease === undefined) {
+          // Another session is analyzing the same Program; reuse its entry.
+          waited = true;
+          hit = await cache.waitForBuild(
+            identity,
+            destination,
+            staleAfterMs,
+            signal,
+          );
+          if (hit === undefined)
+            this.#cacheLease = await cache.tryReserveBuild(
+              identity,
+              staleAfterMs,
+            );
+        }
+      }
+      if (hit !== undefined) {
+        await this.#releaseCacheLease();
+        this.#cacheObservation = {
+          status: "restored",
+          key: hit.key,
+          created_at: hit.manifest.created_at,
+          analysis_ms: hit.manifest.analysis_ms,
+          waited_for_builder: waited,
+        };
+        return { kind: "restore", programPath: hit.programPath };
+      }
+      this.#cacheStaging = await cache.stage(identity);
+      return { kind: "store", outputPath: this.#cacheStaging.outputPath };
+    } catch (cause: unknown) {
+      if (signal.aborted) {
+        await this.#discardAnalysisCache();
+        throw cause;
+      }
+      await this.#discardAnalysisCache();
+      this.#cacheObservation = {
+        status: "unavailable",
+        reason: cause instanceof Error ? cause.message : String(cause),
+      };
+      this.#logger.warn(
+        { reason: this.#cacheObservation.reason },
+        "Ghidra analysis cache is unavailable for this session",
+      );
+      return undefined;
+    }
+  }
+
+  async #publishAnalysisCache(
+    analysisComplete: boolean,
+    analysisMs: number,
+  ): Promise<void> {
+    const staging = this.#cacheStaging;
+    if (staging === undefined) return;
+    this.#cacheStaging = undefined;
+    try {
+      if (!analysisComplete) {
+        await staging.discard();
+        this.#cacheObservation = { status: "not-produced", key: staging.key };
+        return;
+      }
+      const published = await staging.publish(analysisMs);
+      this.#cacheObservation = {
+        status: published.status === "published" ? "stored" : published.status,
+        key: staging.key,
+      };
+    } catch (cause: unknown) {
+      this.#cacheObservation = {
+        status: "unavailable",
+        reason: cause instanceof Error ? cause.message : String(cause),
+      };
+      this.#logger.warn(
+        { reason: this.#cacheObservation.reason },
+        "Ghidra analysis cache entry could not be published",
+      );
+    } finally {
+      await this.#releaseCacheLease();
+    }
+  }
+
+  async #releaseCacheLease(): Promise<void> {
+    const lease = this.#cacheLease;
+    this.#cacheLease = undefined;
+    await lease?.release().catch((cause: unknown) => {
+      this.#logger.warn(
+        { reason: cause instanceof Error ? cause.message : String(cause) },
+        "Ghidra analysis cache build reservation could not be released",
+      );
+    });
+  }
+
+  /** Remove an unpublished staging entry and release its build reservation. */
+  async #discardAnalysisCache(): Promise<void> {
+    const staging = this.#cacheStaging;
+    this.#cacheStaging = undefined;
+    await staging?.discard().catch((cause: unknown) => {
+      this.#logger.warn(
+        { reason: cause instanceof Error ? cause.message : String(cause) },
+        "Ghidra analysis cache staging could not be removed",
+      );
+    });
+    await this.#releaseCacheLease();
   }
 
   async #connectAndHandshake(
@@ -1008,6 +1187,8 @@ export class GhidraClient {
       this.#lastDiagnostics = this.#diagnostics();
       this.#process = undefined;
       this.#launch = undefined;
+      // The JVM that could write staging files has stopped.
+      await this.#discardAnalysisCache();
       await this.#fileResources.retryCleanup();
       for (const owner of this.#snapshotOwners) {
         await owner.close();

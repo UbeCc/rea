@@ -245,6 +245,10 @@ public final class ReaGhidraBridge extends HeadlessScript {
         // GhidraScript wraps run() in a transaction. End it before serving so
         // each edit owns a real outer transaction and can roll back immediately.
         end(true);
+        // Pack the analyzed Program before metadata recovery, requests or edits
+        // so a cached copy holds exactly the post-analysis state.
+        if (descriptor.analysisCacheOutput != null && !analysisTimeoutOccurred())
+            saveAnalysisCacheProgram(Path.of(descriptor.analysisCacheOutput));
         try {
             if (!descriptor.transport.equals("unix-socket") && descriptor.analysisExtensions.size() > 0)
                 throw new IOException("Windows Ghidra P0 does not admit metadata recovery or database mutation.");
@@ -258,6 +262,31 @@ public final class ReaGhidraBridge extends HeadlessScript {
                 decompiler = null;
             }
             analysisExtensions.close();
+        }
+    }
+
+    /**
+     * Write the packed Program for REA's analysis cache. A failure only loses
+     * the cache entry: REA publishes the file solely when it is complete.
+     */
+    private void saveAnalysisCacheProgram(Path output) {
+        Path partial = output.resolveSibling(output.getFileName() + ".partial");
+        try {
+            if (!output.isAbsolute()) throw new IOException("analysis cache output must be absolute");
+            Files.deleteIfExists(partial);
+            currentProgram.saveToPackedFile(partial.toFile(), monitor);
+            Files.setPosixFilePermissions(partial, PosixFilePermissions.fromString("rw-------"));
+            Files.move(partial, output, StandardCopyOption.ATOMIC_MOVE);
+        }
+        catch (Exception exception) {
+            println("REA analysis cache entry was not written: " +
+                exception.getClass().getSimpleName() + ": " + safeMessage(exception));
+            try {
+                Files.deleteIfExists(partial);
+            }
+            catch (IOException ignored) {
+                // REA removes the private staging directory.
+            }
         }
     }
 
@@ -4727,6 +4756,8 @@ public final class ReaGhidraBridge extends HeadlessScript {
             keys.add("analysis_extensions");
         if (parsed.isJsonObject() && parsed.getAsJsonObject().has("loaded_image"))
             keys.add("loaded_image");
+        if (parsed.isJsonObject() && parsed.getAsJsonObject().has("analysis_cache_output"))
+            keys.add("analysis_cache_output");
         JsonObject object = requireObject(parsed, keys);
         return new SessionDescriptor(
             requireString(object, "transport"),
@@ -4739,7 +4770,8 @@ public final class ReaGhidraBridge extends HeadlessScript {
             object.has("analysis_extensions") ? object.getAsJsonArray("analysis_extensions") : new JsonArray(),
             object.has("loaded_image")
                 ? requireObject(object.get("loaded_image"), Set.of("sha256", "source_offset", "byte_length"))
-                : null
+                : null,
+            object.has("analysis_cache_output") ? requireString(object, "analysis_cache_output") : null
         );
     }
 
@@ -4963,7 +4995,9 @@ public final class ReaGhidraBridge extends HeadlessScript {
         String providerVersion,
         String profileDigest,
         JsonArray analysisExtensions,
-        JsonObject loadedImage
+        JsonObject loadedImage,
+        /** Absolute file for the packed post-analysis Program, or null. */
+        String analysisCacheOutput
     ) {}
     private record Request(int id, String method, JsonObject params) {}
 

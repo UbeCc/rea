@@ -84,6 +84,20 @@ export const parseConfig = (
     ...(env.REA_GHIDRA_NATIVEAOT_JAR === undefined
       ? {}
       : { ghidraNativeAotJar: env.REA_GHIDRA_NATIVEAOT_JAR }),
+    ...(env.REA_GHIDRA_ANALYSIS_CACHE_DIR === undefined
+      ? {}
+      : { ghidraAnalysisCacheDirectory: env.REA_GHIDRA_ANALYSIS_CACHE_DIR }),
+    ...(env.REA_GHIDRA_ANALYSIS_CACHE_MAX_BYTES === undefined
+      ? {}
+      : {
+          ghidraAnalysisCacheMaxBytes: env.REA_GHIDRA_ANALYSIS_CACHE_MAX_BYTES,
+        }),
+    ...(env.REA_GHIDRA_MAX_CPU === undefined
+      ? {}
+      : { ghidraMaxCpu: env.REA_GHIDRA_MAX_CPU }),
+    ...(env.REA_GHIDRA_JVM_GC_THREADS === undefined
+      ? {}
+      : { ghidraJvmGcThreads: env.REA_GHIDRA_JVM_GC_THREADS }),
     ilspyCmdPath: env.REA_ILSPY_CMD_PATH,
     hopperLauncherPath:
       env.HOPPER_LAUNCHER_PATH ??
