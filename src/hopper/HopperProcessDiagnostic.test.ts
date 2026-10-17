@@ -2,6 +2,7 @@ import { expect, it } from "vitest";
 
 import type { HopperLauncherOutcome } from "../domain/hopperErrors.js";
 import {
+  hopperApplicationBundle,
   hopperLauncherReportedApplicationNotFound,
   nativeHopperLaunchWasDenied,
 } from "./HopperProcessDiagnostic.js";
@@ -71,6 +72,16 @@ const notFound: HopperLauncherOutcome = {
   output_closed: true,
   diagnostic_truncated: false,
 };
+
+it("names the application bundle that Spotlight must index", () => {
+  expect(
+    hopperApplicationBundle(
+      "/Users/me/Applications/Hopper Disassembler.app/Contents/MacOS/hopper",
+    ),
+  ).toBe("/Users/me/Applications/Hopper Disassembler.app");
+  expect(hopperApplicationBundle("/usr/local/bin/hopper")).toBeUndefined();
+  expect(hopperApplicationBundle(undefined)).toBeUndefined();
+});
 
 it("recognizes the native helper's complete Spotlight not-found report", () => {
   expect(hopperLauncherReportedApplicationNotFound(notFound)).toBe(true);

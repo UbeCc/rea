@@ -47,6 +47,17 @@ export const hopperLauncherReportedApplicationNotFound = (
     outcome.stderr.text,
   );
 
+/**
+ * The macOS application bundle that contains a launcher path, for indexing
+ * guidance. A launcher outside an `.app` bundle has no bundle to index.
+ */
+export const hopperApplicationBundle = (
+  launcherPath: string | undefined,
+): string | undefined => {
+  const match = launcherPath?.match(/^(.*?\.app)\/Contents\/MacOS\/[^/]+$/u);
+  return match?.[1];
+};
+
 /** Extract only a matching Linux adapter failure record. */
 export const hopperLauncherFailureDiagnostic = (
   event: Extract<ProviderProcessDiagnostic, { readonly type: "exit" }>,

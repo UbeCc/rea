@@ -175,7 +175,7 @@ it.skipIf(process.platform !== "darwin")(
     if (failed.ok) throw new Error("Expected Spotlight failure");
     expect(projectAnalysisError(failed.error)).toMatchObject({
       code: "provider_unavailable",
-      message: expect.stringContaining("Spotlight"),
+      message: expect.stringMatching(/Spotlight.*mdimport/su),
       details: { launcher: { exit_code: 3 } },
     });
     if (session === undefined) throw new Error("Missing launch session");

@@ -68,6 +68,7 @@ import {
 import { connectHopperSocketOnce } from "./HopperSocketConnection.js";
 import {
   hopperLauncherFailureDiagnostic,
+  hopperApplicationBundle,
   hopperLauncherReportedApplicationNotFound,
   nativeHopperLaunchWasDenied,
 } from "./HopperProcessDiagnostic.js";
@@ -915,9 +916,15 @@ export class HopperClient {
       // handoff. Wrappers can forward the same message after opening a document.
       if (this.#resources.launch?.nativeHelperVerified === true)
         this.#resources.shutdownConfirmed = true;
+      const application = hopperApplicationBundle(
+        this.#resources.launch?.launcherCommand,
+      );
       return new HopperStartError({
-        userMessage:
-          "Hopper's launcher could not find Hopper because it relies on Spotlight. Enable Spotlight indexing for the volume that contains Hopper (for example: sudo mdutil -i on /System/Volumes/Data), wait for indexing to finish, then retry opening the target.",
+        userMessage: `Hopper's launcher could not find Hopper because it relies on Spotlight, which may not have indexed a newly installed or moved application. ${
+          application === undefined
+            ? "Index the Hopper application with mdimport <path to Hopper Disassembler.app>"
+            : `Index it with: mdimport ${JSON.stringify(application)}`
+        }. If Spotlight indexing is disabled, enable it for the volume that contains Hopper (for example: sudo mdutil -i on /System/Volumes/Data) and wait for indexing to finish. Then retry opening the target.`,
         launcherFailure,
       });
     }
