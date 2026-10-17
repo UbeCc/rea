@@ -31,6 +31,9 @@ const dialogDetectionFixturePath = fileURLToPath(
 const cleanupTimeoutFixturePath = fileURLToPath(
   new URL("../../../fixtures/hopperCleanupTimeout.py", import.meta.url),
 );
+const pythonLibraryFixturePath = fileURLToPath(
+  new URL("../../../fixtures/hopperPythonLibrary.py", import.meta.url),
+);
 const ownerLifetimeFixturePath = fileURLToPath(
   new URL("../../../fixtures/hopperOwnerLifetime.py", import.meta.url),
 );
@@ -60,6 +63,7 @@ const diagnostic = (overrides: DiagnosticOverrides = {}) => {
     strategy: "direct",
     fallback_reason: null,
     xvfb_stderr_bytes: 0,
+    python_library: null,
   } as const;
   return overrides.status === "error"
     ? ({ ...common, ...overrides } satisfies HopperStartupDiagnostic)
@@ -107,6 +111,40 @@ describe("Hopper demo dialog detection", () => {
       });
     },
   );
+});
+
+describe("Hopper Python library preflight", () => {
+  it("repeats Hopper's PythonFinder selection and names the unloadable library", () => {
+    const result = spawnSync(
+      "/usr/bin/python3",
+      [pythonLibraryFixturePath, helperPath],
+      { encoding: "utf8", timeout: 20_000 },
+    );
+    expect(result.status, result.stderr).toBe(0);
+    expect(JSON.parse(result.stdout)).toEqual({
+      // The first existing candidate is authoritative even when a later one
+      // would load, as in Hopper's own selection.
+      missing: {
+        ok: false,
+        code: "python_library_unavailable",
+        reason: "python_library_missing",
+        library: "<dir>/libpython3.99.so.1.0",
+      },
+      present: { ok: true, library: "<dir>/libpython3.98.so.1.0" },
+      static: {
+        ok: false,
+        code: "python_library_unavailable",
+        reason: "python_library_not_shared",
+        library: null,
+      },
+      no_interpreter: {
+        ok: false,
+        code: "python_library_unavailable",
+        reason: "python_interpreter_missing",
+        library: null,
+      },
+    });
+  });
 });
 
 describe("Hopper process cleanup", () => {

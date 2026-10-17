@@ -40,13 +40,14 @@ import {
   type HopperQueueTicket,
 } from "../process/HopperQueue.js";
 import { HOPPER_SHUTDOWN_TIMEOUT_MS } from "./HopperSessionValues.js";
+import { DEFAULT_HOPPER_SLOT_WAIT_MS } from "../config/hopperInstances.js";
 import { verifyMacHopperNativeHelper } from "./HopperMacPublisher.js";
 import { inspectLinuxHopperLauncher } from "../application/LinuxHopper.js";
 import { retryLinuxHopperPublisherCleanup } from "../application/LinuxHopperPublisher.js";
 
 const execFileAsync = promisify(execFile);
 const HOPPER_BACKGROUND_STARTUP_MS = 5_000;
-/** Bounded wait for another REA session to release a Hopper application slot. */
+/** Bounded wait for another REA session to release the macOS Hopper application. */
 export const HOPPER_APPLICATION_LEASE_WAIT_MS = 30_000;
 const HOPPER_APPLICATION_LEASE_POLL_MS = 500;
 
@@ -83,13 +84,23 @@ export type BridgeLaunch = {
     })
 );
 
+/** Caller controls for one bridge launch. */
+export interface BridgeLaunchOptions {
+  readonly signal?: AbortSignal;
+  /**
+   * Stop the caller's startup budget while waiting for a shared application
+   * slot; the returned function resumes it. Queueing is not Hopper startup.
+   */
+  readonly pauseStartupDeadline?: () => () => void;
+}
+
 /** Application-owned capability that starts the in-Hopper bridge. */
 export interface BridgeLauncher {
   /** Retry owned pre-launch resources even when no application was started. */
   cleanup?(): Promise<Result<null, ProviderCleanupError>>;
   launch(
     session: BridgeSession,
-    options?: { readonly signal?: AbortSignal },
+    options?: BridgeLaunchOptions,
   ): Promise<
     Result<
       BridgeLaunch,
@@ -107,6 +118,8 @@ interface SharedHopperApplicationLauncherOptions {
   readonly bridgeScriptPath: string;
   /** Linux demo application slots shared by cooperating REA processes. */
   readonly maxLinuxInstances?: number;
+  /** Longest wait in the fair Linux slot queue before reporting busy. */
+  readonly linuxSlotWaitMs?: number;
   readonly preparedImage?: {
     readonly image: MachOThinSlice;
     readonly sourceSha256: string;
@@ -194,17 +207,20 @@ export class HopperApplicationLauncher implements BridgeLauncher {
 
   async launch(
     session: BridgeSession,
-    options: { readonly signal?: AbortSignal } = {},
+    options: BridgeLaunchOptions = {},
   ): Promise<
     Result<
       BridgeLaunch,
       HopperStartError | HopperCancelledError | HopperProcessError
     >
   > {
+    // Waiting for a slot is not Hopper startup; keep the caller's startup
+    // budget for launch, analysis and the bridge handshake.
+    const resumeDeadline = options.pauseStartupDeadline?.();
     const leaseResult = await this.#acquireLaunchLease(
       session.runId,
       options.signal,
-    );
+    ).finally(() => resumeDeadline?.());
     if (!leaseResult.ok) return leaseResult;
     const lease = leaseResult.value;
     let leaseTransferred = false;
@@ -395,12 +411,15 @@ export class HopperApplicationLauncher implements BridgeLauncher {
               ...input,
               launcherPath: this.options.launcherPath,
             }));
-    // Sessions are commonly short CLI calls, so wait briefly for a slot
-    // before reporting its current owner. Each Linux slot has a private
-    // TMPDIR, so a reserved slot can never forward into another owner.
+    // macOS waits briefly for its single application before naming the
+    // owner. Linux waiters queue fairly for a pooled slot until the
+    // configured deadline; each slot has a private TMPDIR, so a reserved slot
+    // can never forward into another owner.
     const waitMs =
       this.dependencies.applicationLeaseWaitMs ??
-      HOPPER_APPLICATION_LEASE_WAIT_MS;
+      (linuxDemo
+        ? (this.options.linuxSlotWaitMs ?? DEFAULT_HOPPER_SLOT_WAIT_MS)
+        : HOPPER_APPLICATION_LEASE_WAIT_MS);
     // Waiters for the real Linux slot store queue FIFO across processes, so
     // a newcomer cannot overtake a session that is already waiting.
     const enterQueue =
@@ -420,11 +439,7 @@ export class HopperApplicationLauncher implements BridgeLauncher {
       return err(
         waited.error === "cancelled"
           ? new HopperCancelledError()
-          : this.#applicationBusy(
-              waited.error.owner,
-              linuxDemo,
-              waited.error.waitedMs,
-            ),
+          : this.#applicationBusy(waited.error, linuxDemo),
       );
     } catch (cause: unknown) {
       return err(
@@ -436,14 +451,18 @@ export class HopperApplicationLauncher implements BridgeLauncher {
   }
 
   #applicationBusy(
-    owner: { readonly runId: string; readonly processId: number },
+    busy: ApplicationSlotBusy,
     linuxDemo: boolean,
-    waitedMs: number,
   ): HopperStartError {
+    const { owner, waitedMs, waitersAhead } = busy;
+    const queue =
+      waitersAhead === undefined
+        ? ""
+        : ` ${String(waitersAhead)} earlier waiter(s) were still queued ahead of this session.`;
     return new HopperStartError({
       ownerRunId: owner.runId,
       userMessage: linuxDemo
-        ? `All ${String(this.options.maxLinuxInstances ?? 1)} Linux Hopper instance slot(s) are in use (for example by REA session ${owner.runId}, process ${owner.processId}); REA waited ${Math.round(waitedMs / 1_000)} s and did not open ${this.options.targetPath}. Retry after a session closes, send related queries through one MCP session, or raise REA_HOPPER_MAX_INSTANCES if the host has memory for more demo applications.`
+        ? `All ${String(this.options.maxLinuxInstances ?? 1)} Linux Hopper instance slot(s) are in use (for example by REA session ${owner.runId}, process ${owner.processId}); REA queued for ${Math.round(waitedMs / 1_000)} s and did not open ${this.options.targetPath}.${queue} Retry after a session closes, send related queries through one MCP session, raise REA_HOPPER_SLOT_WAIT_MS to queue longer, or raise REA_HOPPER_MAX_INSTANCES if the host has memory for more demo applications.`
         : `Hopper is already serving REA session ${owner.runId} (process ${owner.processId}); it cannot open ${this.options.targetPath} in another session. macOS Hopper runs one REA session at a time because each REA bridge occupies Hopper's single Python thread until its session closes. REA waited ${Math.round(waitedMs / 1_000)} s. Send related queries through one session (for example MCP open_binary followed by batch_decompile), or retry after that session closes.`,
     });
   }
@@ -557,6 +576,13 @@ const launchHopperProcess = async (input: {
   return spawn(input.argumentsForTarget);
 };
 
+interface ApplicationSlotBusy {
+  readonly owner: { readonly runId: string; readonly processId: number };
+  readonly waitedMs: number;
+  /** Queue position when the wait ended; undefined without a queue. */
+  readonly waitersAhead?: number;
+}
+
 type ApplicationLeaseAcquire = (input: {
   readonly runId: string;
 }) => Promise<HopperTargetLeaseAcquisition>;
@@ -574,16 +600,7 @@ const waitForApplicationSlot = async (input: {
   readonly runId: string;
   readonly waitMs: number;
   readonly signal: AbortSignal | undefined;
-}): Promise<
-  Result<
-    HopperTargetLease,
-    | "cancelled"
-    | {
-        readonly owner: { readonly runId: string; readonly processId: number };
-        readonly waitedMs: number;
-      }
-  >
-> => {
+}): Promise<Result<HopperTargetLease, "cancelled" | ApplicationSlotBusy>> => {
   const started = Date.now();
   const ticket = await input.enterQueue?.({ runId: input.runId });
   try {
@@ -594,11 +611,16 @@ const waitForApplicationSlot = async (input: {
       if (mayTry) {
         const acquisition = await input.acquire({ runId: input.runId });
         if (acquisition.acquired) return ok(acquisition.lease);
-        if (remaining <= 0)
+        if (remaining <= 0) {
+          const waitersAhead = await ticket
+            ?.waitersAhead()
+            .catch(() => undefined);
           return err({
             owner: acquisition.owner,
             waitedMs: Date.now() - started,
+            ...(waitersAhead === undefined ? {} : { waitersAhead }),
           });
+        }
       }
       if (
         (await waitForAbortableDelay(

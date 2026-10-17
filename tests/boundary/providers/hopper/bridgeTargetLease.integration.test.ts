@@ -119,6 +119,7 @@ describe("Linux Hopper slot waiting in the launcher", () => {
             events.push(`head?${String(headChecks)}`);
             return headChecks >= 3;
           },
+          waitersAhead: async () => (headChecks >= 3 ? 0 : 1),
           leave: async () => void events.push("leave"),
         }),
         acquireApplicationLease: async () => {
@@ -189,6 +190,70 @@ describe("Linux Hopper slot waiting in the launcher", () => {
     expect(leaseChecks).toBe(3);
     expect(result.ok).toBe(false);
     expect(releases).toBe(1);
+  });
+});
+
+describe("Linux Hopper fair queue deadline", () => {
+  it("queues until the configured slot deadline outside the startup budget", async () => {
+    const events: string[] = [];
+    const started = Date.now();
+    const result = await new HopperApplicationLauncher(
+      {
+        environment: {},
+        launcherPath: "/unused/Hopper",
+        targetPath: "/target",
+        targetKind: "executable",
+        loaderArgs: [],
+        bridgeScriptPath: "/rea/hopper_bridge.py",
+        launchMode: "verified_linux_demo",
+        demoHelperPath: "/rea/hopper-demo-x11.py",
+        maxLinuxInstances: 1,
+        // The configured queue deadline, not the macOS default, bounds waiting.
+        linuxSlotWaitMs: 1_200,
+      },
+      {
+        platform: "linux",
+        enterApplicationQueue: async () => ({
+          isHead: async () => false,
+          waitersAhead: async () => 2,
+          leave: async () => void events.push("leave"),
+        }),
+        acquireApplicationLease: async () => {
+          events.push("acquire");
+          return {
+            acquired: false,
+            owner: { runId: "long-session", processId: 23 },
+          };
+        },
+      },
+    ).launch(
+      {
+        directory: "/missing/rea-launch",
+        socketPath: "/missing/rea-launch/bridge.sock",
+        token: "token",
+        runId: "third-session",
+      },
+      {
+        pauseStartupDeadline: () => {
+          events.push("pause");
+          return () => void events.push("resume");
+        },
+      },
+    );
+    expect(Date.now() - started).toBeGreaterThanOrEqual(1_150);
+    expect(result).toMatchObject({
+      ok: false,
+      error: {
+        _tag: "HopperStartError",
+        ownerRunId: "long-session",
+        userMessage: expect.stringMatching(
+          /queued for 1 s.*2 earlier waiter\(s\).*REA_HOPPER_SLOT_WAIT_MS/su,
+        ),
+      },
+    });
+    // Waiters behind the head never poll; only the deadline attempt names an
+    // owner, and the startup budget resumes after the ticket is left.
+    expect(events).toEqual(["pause", "acquire", "leave", "resume"]);
   });
 });
 

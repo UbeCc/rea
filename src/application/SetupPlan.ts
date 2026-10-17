@@ -32,6 +32,7 @@ export interface SetupDiscovery {
   readonly defaultClientIds: readonly string[];
   readonly clientStates: readonly SetupClientState[];
   readonly linuxPackageFamily?: LinuxPackageFamily;
+  readonly linuxPythonLibraryPackage?: string;
 }
 
 /** Discover supported clients and current registrations without mutation. */
@@ -127,6 +128,9 @@ export const discoverSetupState = async (input: {
     ...(linuxDistribution?.packageFamily === undefined
       ? {}
       : { linuxPackageFamily: linuxDistribution.packageFamily }),
+    ...(linuxDistribution?.pythonLibraryPackage === undefined
+      ? {}
+      : { linuxPythonLibraryPackage: linuxDistribution.pythonLibraryPackage }),
   };
 };
 
@@ -219,6 +223,11 @@ export const planSetupActions = async (input: {
     ...(input.discovery.linuxPackageFamily === undefined
       ? {}
       : { linuxPackageFamily: input.discovery.linuxPackageFamily }),
+    ...(input.discovery.linuxPythonLibraryPackage === undefined
+      ? {}
+      : {
+          linuxPythonLibraryPackage: input.discovery.linuxPythonLibraryPackage,
+        }),
     command: input.command,
   });
   const blocker =
@@ -287,6 +296,7 @@ const setupPlan = (input: {
   }[];
   readonly providerEnvironment: SetupProviderEnvironment;
   readonly linuxPackageFamily?: LinuxPackageFamily;
+  readonly linuxPythonLibraryPackage?: string;
   readonly command: readonly string[];
 }): readonly SetupAction[] => [
   ...(input.installHopper
@@ -301,14 +311,17 @@ const setupPlan = (input: {
               : "system package manager",
           detail:
             input.platform === "linux"
-              ? `Download the current official Hopper demo, verify its PGP publisher and launcher bytes, and retain archive, public-key.asc and release.json under ${input.hopperCacheDirectory ?? `${input.homeDirectory}/.cache/rea/hopper-releases`}/<launcher-sha256> for offline verification. Preserve replaced damaged evidence beside it as <launcher-sha256>.backup-<id>. Install Hopper plus its Xvfb demo-session dependencies. REA uses a private display and selects Hopper's offered demo mode for each analysis session.`
+              ? `Download the current official Hopper demo, verify its PGP publisher and launcher bytes, and retain archive, public-key.asc and release.json under ${input.hopperCacheDirectory ?? `${input.homeDirectory}/.cache/rea/hopper-releases`}/<launcher-sha256> for offline verification. Preserve replaced damaged evidence beside it as <launcher-sha256>.backup-<id>. Install Hopper plus its Xvfb demo-session dependencies and the shared Python library Hopper loads to run scripts. REA uses a private display and selects Hopper's offered demo mode for each analysis session.`
               : "Download the official Hopper package, verify it, and install it. Hopper may show its demo or license prompt when first opened.",
           external: true,
           operation: "install" as const,
           ...(input.platform === "linux"
             ? input.linuxPackageFamily === undefined
               ? {}
-              : linuxDisclosure(input.linuxPackageFamily)
+              : linuxDisclosure(
+                  input.linuxPackageFamily,
+                  input.linuxPythonLibraryPackage,
+                )
             : {
                 networkOrigins: macHopperInstallDisclosure.networkOrigins,
                 commands: macHopperInstallDisclosure.commands,
@@ -352,10 +365,14 @@ const setupPlan = (input: {
     : []),
 ];
 
-const linuxDisclosure = (family: LinuxPackageFamily) => {
+const linuxDisclosure = (
+  family: LinuxPackageFamily,
+  pythonLibraryPackage: string | undefined,
+) => {
   const disclosure = linuxHopperInstallDisclosure(
     family,
     process.getuid?.() === 0,
+    pythonLibraryPackage,
   );
   return {
     networkOrigins: disclosure.networkOrigins,

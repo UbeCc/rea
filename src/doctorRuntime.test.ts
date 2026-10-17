@@ -3,7 +3,11 @@ import { join } from "node:path";
 
 import { expect, it as test } from "vitest";
 
-import { createSystemDoctorHost } from "./doctorRuntime.js";
+import {
+  createSystemDoctorHost,
+  linuxDemoRuntimeCheck,
+  pythonLibraryRemediation,
+} from "./doctorRuntime.js";
 import { DOCTOR_PROVIDER_IDS } from "./application/DoctorProviderIds.js";
 import { providerRegistrationEnvironment } from "./application/SetupRegistrationEnvironment.js";
 import { createTestTempDirectory } from "../tests/fixtures/temporaryDirectory.js";
@@ -75,3 +79,74 @@ const createFakeJdk = async (root: string): Promise<string> => {
   await chmod(java, 0o700);
   return javaHome;
 };
+
+const probeFacts = {
+  component: "hopper_private_display",
+  operation: "probe",
+  socket_directory: "/tmp/.X11-unix",
+  socket_directory_mode: "1777",
+  mount_read_only: false,
+  effective_socket_directory_mode: "1777",
+  effective_mount_read_only: false,
+  wsl: false,
+  strategy: "direct",
+  fallback_reason: null,
+  xvfb_stderr_bytes: 0,
+} as const;
+
+it("flags a missing Hopper Python library as a named missing dependency", () => {
+  const check = linuxDemoRuntimeCheck({
+    ok: false,
+    strategy: "unavailable",
+    exitCode: 82,
+    diagnostic: {
+      ...probeFacts,
+      status: "error",
+      failure_code: "python_library_unavailable",
+      reason: "python_library_missing",
+      python_library: "/usr/lib/x86_64-linux-gnu/libpython3.12.so.1.0",
+    },
+  });
+  expect(check).toMatchObject({
+    name: "hopper-demo-runtime",
+    ok: false,
+    classification: "missing_dependency",
+    detail: expect.stringContaining(
+      "python_library=/usr/lib/x86_64-linux-gnu/libpython3.12.so.1.0",
+    ),
+    remediation: expect.stringContaining("apt-get install libpython3.12"),
+  });
+  expect(check.remediation).toContain("Cannot launch script");
+});
+
+it("reports the loadable Python library when the demo runtime is healthy", () => {
+  expect(
+    linuxDemoRuntimeCheck({
+      ok: true,
+      strategy: "direct",
+      diagnostic: {
+        ...probeFacts,
+        status: "ready",
+        failure_code: null,
+        reason: "ready",
+        python_library: "/usr/lib/libpython3.13.so.1.0",
+      },
+    }),
+  ).toMatchObject({
+    ok: true,
+    classification: "healthy",
+    detail: expect.stringContaining(
+      "python_library=/usr/lib/libpython3.13.so.1.0",
+    ),
+  });
+});
+
+it("names the Python library package only when the soname identifies it", () => {
+  expect(pythonLibraryRemediation("/opt/lib/libpython3.14t.so.1.0")).toContain(
+    "apt-get install libpython3.14;",
+  );
+  for (const library of [null, "/opt/lib/libcustom.so"])
+    expect(pythonLibraryRemediation(library)).toContain(
+      "the libpython3.X package matching python3 --version",
+    );
+});

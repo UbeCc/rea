@@ -75,6 +75,7 @@ import {
   nativeHopperLaunchWasDenied,
 } from "./HopperProcessDiagnostic.js";
 import { DEFAULT_HOPPER_STARTUP_TIMEOUT_MS } from "../config/providerStartupTimeout.js";
+import { isHopperMutatingOperation } from "./HopperProviderCapabilities.js";
 import {
   HopperRequestQueue,
   type HopperRequestActivity,
@@ -96,6 +97,12 @@ export interface HopperClientOptions {
   readonly launcher: BridgeLauncher;
   readonly runId?: string;
   readonly startupTimeoutMs?: number;
+  /**
+   * Age after which an idle, REA-owned Linux demo application is closed and
+   * relaunched before the next request, ahead of the vendor demo's
+   * ~30-minute session limit. Omitted or 0 disables recycling.
+   */
+  readonly demoRecycleAfterMs?: number;
   readonly onDiagnostic?: (event: HopperDiagnostic) => void;
   readonly logger?: Logger;
 }
@@ -141,6 +148,11 @@ export class HopperClient {
   #runId: string | undefined;
   #startupAttempt: HopperStartupAttempt | undefined;
   #closePromise: Promise<Result<null, AnalysisError>> | undefined;
+  /** Monotonic launch time of the current owned application. */
+  #launchedAt: number | undefined;
+  /** Hopper holds analyst edits that a relaunch would discard. */
+  #metadataEdited = false;
+  #recycling: Promise<Result<null, AnalysisError>> | undefined;
   readonly #onSocketData = (chunk: string): void => {
     this.#responses.push(chunk);
   };
@@ -438,7 +450,10 @@ export class HopperClient {
           token: this.#token,
           runId,
         },
-        { signal: deadline.signal },
+        {
+          signal: deadline.signal,
+          pauseStartupDeadline: () => deadline.pause(),
+        },
       )
       .catch((cause: unknown) => err(new HopperStartError({ cause })));
     if (!launched.ok) {
@@ -449,6 +464,8 @@ export class HopperClient {
       );
     }
     this.#resources.launch = launched.value;
+    this.#launchedAt = performance.now();
+    this.#metadataEdited = false;
     this.#attachLauncher(launched.value);
     const ownership = launched.value.ownership;
     if (ownership !== undefined) {
@@ -588,12 +605,48 @@ export class HopperClient {
       readonly progress?: ProgressReporter;
     } = {},
   ): Promise<Result<JsonValue, AnalysisError>> {
+    const recycled = await this.#recycleAgedDemoApplication();
+    if (!recycled.ok) return recycled;
     const started = await this.start(options.signal);
     if (!started.ok) return started;
+    if (isHopperMutatingOperation(name)) this.#metadataEdited = true;
     return this.#normalizeToolResult(
       name,
       await this.#request(name, arguments_, options),
     );
+  }
+
+  /**
+   * Close an idle owned Linux demo application that is near the vendor's
+   * session limit, so the next request starts a fresh application instead of
+   * failing at expiry. Applications holding analyst edits, or serving
+   * another request, are kept; a later expiry still reports
+   * demo_session_expired.
+   */
+  #recycleAgedDemoApplication(): Promise<Result<null, AnalysisError>> {
+    if (this.#recycling !== undefined) return this.#recycling;
+    const after = this.#options.demoRecycleAfterMs ?? 0;
+    const launchedAt = this.#launchedAt;
+    if (
+      after <= 0 ||
+      launchedAt === undefined ||
+      this.#metadataEdited ||
+      this.#resources.launch?.shutdownMode !== "process-cleanup" ||
+      !this.isReady() ||
+      this.requestActivity() !== null
+    )
+      return Promise.resolve(ok(null));
+    const ageMs = performance.now() - launchedAt;
+    if (ageMs < after) return Promise.resolve(ok(null));
+    this.#logger.info(
+      { ageMs: Math.round(ageMs), recycleAfterMs: after },
+      "Recycling the idle Hopper demo application before its session limit",
+    );
+    const recycling = this.close().finally(() => {
+      if (this.#recycling === recycling) this.#recycling = undefined;
+    });
+    this.#recycling = recycling;
+    return recycling;
   }
 
   /** Dispatch against the connected bridge without invoking startup or retry. */

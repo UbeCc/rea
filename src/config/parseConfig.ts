@@ -107,6 +107,8 @@ export const parseConfig = (
       ),
     hopperStartupTimeoutMs: env.REA_HOPPER_STARTUP_TIMEOUT_MS,
     hopperMaxInstances: env.REA_HOPPER_MAX_INSTANCES,
+    hopperSlotWaitMs: env.REA_HOPPER_SLOT_WAIT_MS,
+    hopperDemoRecycleMs: env.REA_HOPPER_DEMO_RECYCLE_MS,
     hopperTargetPath: env.HOPPER_TARGET_PATH,
     hopperTargetKind: env.HOPPER_TARGET_KIND,
     hopperLoaderArgs: env.loaderArgs,

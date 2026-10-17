@@ -89,6 +89,7 @@ class DiagnosticExitingLauncher implements BridgeLauncher {
       strategy: "direct",
       fallback_reason: null,
       xvfb_stderr_bytes: 100,
+      python_library: null,
     };
     const line = `${LINUX_PRIVATE_DISPLAY_DIAGNOSTIC_PREFIX}${JSON.stringify(diagnostic)}\n`;
     return Promise.resolve(
