@@ -30,7 +30,9 @@ export const waitForAbortableDelay = (
  */
 export class ProviderStartupDeadline {
   readonly #controller = new AbortController();
-  readonly #deadlineAt: number;
+  #deadlineAt: number;
+  /** Budget retained while another owner's work is excluded from this deadline. */
+  #suspendedRemainingMs: number | undefined;
   readonly #externalSignal: AbortSignal | undefined;
   readonly #onExternalAbort: () => void;
   #timer: NodeJS.Timeout | undefined;
@@ -46,7 +48,10 @@ export class ProviderStartupDeadline {
     this.#externalSignal = signal;
     this.#onExternalAbort = () => {
       if (this.#controller.signal.aborted) return;
-      if (performance.now() >= this.#deadlineAt) {
+      if (
+        this.#suspendedRemainingMs === undefined &&
+        performance.now() >= this.#deadlineAt
+      ) {
         this.#interruption = "timeout";
         this.#abort(
           new DOMException("Provider startup deadline elapsed", "TimeoutError"),
@@ -71,10 +76,9 @@ export class ProviderStartupDeadline {
 
   /** First control path that interrupted startup, if any. */
   get interruption(): "cancelled" | "timeout" | undefined {
-    return (
-      this.#interruption ??
-      (performance.now() >= this.#deadlineAt ? "timeout" : undefined)
-    );
+    if (this.#interruption !== undefined) return this.#interruption;
+    if (this.#suspendedRemainingMs !== undefined) return undefined;
+    return performance.now() >= this.#deadlineAt ? "timeout" : undefined;
   }
 
   /** Milliseconds still available to the next startup phase. */
@@ -83,6 +87,8 @@ export class ProviderStartupDeadline {
     // deadline, so an elapsed timer must not report time left to spend. A
     // terminal timeout also cannot regain budget after later clock queries.
     if (this.#interruption === "timeout") return 0;
+    if (this.#suspendedRemainingMs !== undefined)
+      return Math.ceil(this.#suspendedRemainingMs);
     return Math.max(0, Math.ceil(this.#deadlineAt - performance.now()));
   }
 
@@ -116,6 +122,34 @@ export class ProviderStartupDeadline {
       });
     };
     return poll();
+  }
+
+  /**
+   * Exclude an interval spent waiting on another owner's work, such as a
+   * separate process building a shared result, from this startup budget.
+   * Caller cancellation still aborts the signal while suspended. The returned
+   * function re-arms the remaining budget once; it is idempotent.
+   */
+  suspend(): () => void {
+    const remaining = this.#deadlineAt - performance.now();
+    if (
+      this.#controller.signal.aborted ||
+      this.#suspendedRemainingMs !== undefined ||
+      remaining <= 0
+    )
+      return () => undefined;
+    this.#suspendedRemainingMs = remaining;
+    this.#clearTimer();
+    let resumed = false;
+    return () => {
+      if (resumed) return;
+      resumed = true;
+      const retained = this.#suspendedRemainingMs;
+      this.#suspendedRemainingMs = undefined;
+      if (retained === undefined || this.#controller.signal.aborted) return;
+      this.#deadlineAt = performance.now() + retained;
+      this.#armDeadlineTimer(retained);
+    };
   }
 
   /** Release the deadline timer and external abort listener. */

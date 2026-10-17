@@ -122,12 +122,23 @@ export const ghidraAnalysisCacheLimitations = (
   observation?.status === "restored"
     ? [
         `Ghidra restored this Program from persistent analysis cache entry ${observation.key.slice(0, 16)} (created ${observation.created_at}); import, auto-analysis and REA's post-analysis repairs ran when that entry was stored, not in this session. The entry is bound to the imported-byte SHA-256, analysis profile digest, Ghidra installation and bridge sources.`,
+        ...(observation.builder_wait_ms === null
+          ? []
+          : [
+              `This session waited ${String(observation.builder_wait_ms)} ms for another session building the same cache entry; that wait was excluded from this session's startup deadline.`,
+            ]),
       ]
-    : observation?.status === "unavailable"
+    : observation !== undefined &&
+        observation.status !== "unavailable" &&
+        typeof observation.builder_wait_ms === "number"
       ? [
-          `The configured Ghidra analysis cache was not used for this session: ${observation.reason}`,
+          `This session waited ${String(observation.builder_wait_ms)} ms for another session that reserved the same cache entry but released it without publishing, then analyzed the Program itself; that wait was excluded from this session's startup deadline.`,
         ]
-      : [];
+      : observation?.status === "unavailable"
+        ? [
+            `The configured Ghidra analysis cache was not used for this session: ${observation.reason}`,
+          ]
+        : [];
 
 /** One cache owner per directory and budget for this process. */
 const analysisCaches = new Map<string, GhidraAnalysisCache>();

@@ -157,6 +157,8 @@ export class GhidraClient {
   #cacheStaging: GhidraAnalysisCacheStaging | undefined;
   #cacheLease: GhidraAnalysisCacheBuildLease | undefined;
   #cacheObservation: GhidraAnalysisCacheObservation | undefined;
+  /** Time spent waiting for another builder before this session built its own entry. */
+  #cacheBuilderWaitMs: number | null = null;
   readonly #failure = bindGhidraSessionFailure(
     () => this.#diagnostics(),
     (value, incomplete) => this.#redactAuthentication(value, incomplete),
@@ -781,7 +783,7 @@ export class GhidraClient {
     if (deadline.signal.aborted) return this.#startupInterrupted(deadline);
     let analysisCache: GhidraLaunchSession["analysisCache"];
     try {
-      analysisCache = await this.#planAnalysisCache(deadline.signal);
+      analysisCache = await this.#planAnalysisCache(deadline);
     } catch (cause: unknown) {
       if (deadline.signal.aborted) return this.#startupInterrupted(deadline);
       throw cause;
@@ -884,9 +886,11 @@ export class GhidraClient {
    * Only cancellation propagates.
    */
   async #planAnalysisCache(
-    signal: AbortSignal,
+    deadline: ProviderStartupDeadline,
   ): Promise<GhidraLaunchSession["analysisCache"]> {
+    const { signal } = deadline;
     this.#cacheObservation = undefined;
+    this.#cacheBuilderWaitMs = null;
     const configured = this.#options.analysisCache;
     const runtimeRoot = this.#runtimeRoot;
     const snapshotPath = this.#snapshotPath;
@@ -917,18 +921,29 @@ export class GhidraClient {
       const { cache } = configured;
       const staleAfterMs = this.#options.startupTimeoutMs;
       let waited = false;
+      let builderWaitMs: number | null = null;
       let hit = await cache.restore(identity, destination, signal);
       if (hit === undefined) {
         this.#cacheLease = await cache.tryReserveBuild(identity, staleAfterMs);
         if (this.#cacheLease === undefined) {
           // Another session is analyzing the same Program; reuse its entry.
+          // That builder owns its own startup deadline and the reservation is
+          // stale once it exceeds it, so waiting does not spend this
+          // session's budget; caller cancellation still stops the wait.
           waited = true;
-          hit = await cache.waitForBuild(
-            identity,
-            destination,
-            staleAfterMs,
-            signal,
-          );
+          const waitStartedAt = performance.now();
+          const resume = deadline.suspend();
+          try {
+            hit = await cache.waitForBuild(
+              identity,
+              destination,
+              staleAfterMs,
+              signal,
+            );
+          } finally {
+            resume();
+            builderWaitMs = Math.round(performance.now() - waitStartedAt);
+          }
           if (hit === undefined)
             this.#cacheLease = await cache.tryReserveBuild(
               identity,
@@ -944,10 +959,12 @@ export class GhidraClient {
           created_at: hit.manifest.created_at,
           analysis_ms: hit.manifest.analysis_ms,
           waited_for_builder: waited,
+          builder_wait_ms: builderWaitMs,
         };
         return { kind: "restore", programPath: hit.programPath };
       }
       this.#cacheStaging = await cache.stage(identity);
+      this.#cacheBuilderWaitMs = builderWaitMs;
       return { kind: "store", outputPath: this.#cacheStaging.outputPath };
     } catch (cause: unknown) {
       if (signal.aborted) {
@@ -984,6 +1001,7 @@ export class GhidraClient {
       this.#cacheObservation = {
         status: published.status === "published" ? "stored" : published.status,
         key: staging.key,
+        builder_wait_ms: this.#cacheBuilderWaitMs,
       };
     } catch (cause: unknown) {
       this.#cacheObservation = {
