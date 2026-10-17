@@ -18,8 +18,8 @@ import { promisify } from "node:util";
 import { afterEach, describe, expect, it } from "vitest";
 
 import {
-  acquireHopperTargetLease,
   acquireLinuxHopperApplicationLease,
+  acquireMacHopperApplicationLease,
 } from "../process/HopperLease.js";
 
 const directories: string[] = [];
@@ -110,114 +110,109 @@ describe.skipIf(process.platform === "win32")(
   },
 );
 
-describe("Hopper target leases", () => {
-  it("reports the owning REA session for a duplicate target and profile", async () => {
+describe("macOS Hopper application leases", () => {
+  it("reserves one Hopper application across targets until release", async () => {
     const directory = await temporaryDirectory();
-    const targetPath = await temporaryTarget();
-    const first = await acquireHopperTargetLease({
-      ...leaseInput(targetPath),
+    const launcherPath = await temporaryLauncher();
+    const first = await acquireMacHopperApplicationLease({
       directory,
+      launcherPath,
       runId: "session-first",
     });
     expect(first.acquired).toBe(true);
     if (!first.acquired) return;
 
-    const duplicate = await acquireHopperTargetLease({
-      ...leaseInput(targetPath),
-      directory,
-      runId: "session-second",
-    });
-    expect(duplicate).toMatchObject({
+    expect(
+      await acquireMacHopperApplicationLease({
+        directory,
+        launcherPath,
+        runId: "session-second",
+      }),
+    ).toMatchObject({
       acquired: false,
       owner: { runId: "session-first", processId: process.pid },
     });
 
     await first.lease.release();
-    const reopened = await acquireHopperTargetLease({
-      ...leaseInput(targetPath),
+    const reopened = await acquireMacHopperApplicationLease({
       directory,
+      launcherPath,
       runId: "session-third",
     });
     expect(reopened.acquired).toBe(true);
     if (reopened.acquired) await reopened.lease.release();
   });
 
-  it("keeps different Hopper profiles independent", async () => {
-    const directory = await temporaryDirectory();
-    const targetPath = await temporaryTarget();
-    const first = await acquireHopperTargetLease({
-      ...leaseInput(targetPath),
-      directory,
-      runId: "session-one",
-    });
-    const second = await acquireHopperTargetLease({
-      ...leaseInput(targetPath),
-      directory,
-      loaderArgs: ["--aarch64"],
-      runId: "session-two",
-    });
-    expect(first.acquired).toBe(true);
-    expect(second.acquired).toBe(true);
-    if (first.acquired) await first.lease.release();
-    if (second.acquired) await second.lease.release();
-  });
-
   it.skipIf(process.platform === "win32")(
-    "shares one lease for symlink aliases of the same target",
+    "shares one lease for launcher aliases and separates other applications",
     async () => {
       const directory = await temporaryDirectory();
-      const targetPath = await temporaryTarget();
-      const alias = join(dirname(targetPath), "sample-alias");
-      await symlink(targetPath, alias);
-      const first = await acquireHopperTargetLease({
-        ...leaseInput(targetPath),
+      const launcherPath = await temporaryLauncher();
+      const alias = join(dirname(launcherPath), "hopper-alias");
+      await symlink(launcherPath, alias);
+      const other = await temporaryLauncher();
+      const first = await acquireMacHopperApplicationLease({
         directory,
+        launcherPath,
         runId: "canonical-owner",
       });
       expect(first.acquired).toBe(true);
       if (!first.acquired) return;
       try {
         expect(
-          await acquireHopperTargetLease({
-            ...leaseInput(alias),
+          await acquireMacHopperApplicationLease({
             directory,
+            launcherPath: alias,
             runId: "alias-request",
           }),
         ).toMatchObject({
           acquired: false,
           owner: { runId: "canonical-owner" },
         });
+        const independent = await acquireMacHopperApplicationLease({
+          directory,
+          launcherPath: other,
+          runId: "other-application",
+        });
+        expect(independent.acquired).toBe(true);
+        if (independent.acquired) await independent.lease.release();
       } finally {
         await first.lease.release();
       }
     },
   );
 
-  it.each(["missing", "not-directory"] as const)(
-    "does not create a lease endpoint when target canonicalization fails for %s",
-    async (failure) => {
-      const directory = await temporaryDirectory();
-      const parent = await temporaryDirectory();
-      const targetPath =
-        failure === "missing"
-          ? join(parent, "missing-target")
-          : join(await temporaryTarget(parent), "child");
-      await expect(
-        acquireHopperTargetLease({
-          ...leaseInput(targetPath),
-          directory,
-          runId: "unresolvable-target",
-        }),
-      ).rejects.toMatchObject({
-        _tag: "HopperStartError",
-        userMessage: expect.stringContaining("canonical path"),
-        cause: expect.objectContaining({
-          code: failure === "missing" ? "ENOENT" : "ENOTDIR",
-        }),
-      });
-      expect(await readdir(directory)).toEqual([]);
-    },
-  );
+  it("does not create a lease endpoint for an unresolvable launcher", async () => {
+    const directory = await temporaryDirectory();
+    await expect(
+      acquireMacHopperApplicationLease({
+        directory,
+        launcherPath: join(await temporaryDirectory(), "missing-hopper"),
+        runId: "unresolvable-launcher",
+      }),
+    ).rejects.toMatchObject({
+      _tag: "HopperStartError",
+      userMessage: expect.stringContaining("canonical path"),
+    });
+    expect(await readdir(directory)).toEqual([]);
+  });
+
+  it("is independent of the Linux demo application lease", async () => {
+    const directory = await temporaryDirectory();
+    const mac = await acquireMacHopperApplicationLease({
+      directory,
+      launcherPath: await temporaryLauncher(),
+      runId: "mac",
+    });
+    const linux = await acquireLinuxHopperApplicationLease({
+      directory,
+      runId: "linux",
+    });
+    expect(mac.acquired).toBe(true);
+    expect(linux.acquired).toBe(true);
+    if (mac.acquired) await mac.lease.release();
+    if (linux.acquired) await linux.lease.release();
+  });
 });
 
 describe("Linux Hopper application leases", () => {
@@ -359,17 +354,10 @@ const releasedApplicationSocket = async (
   return join(directory, name);
 };
 
-const leaseInput = (targetPath: string) => ({
-  targetPath,
-  targetKind: "executable" as const,
-  loaderArgs: [],
-});
-
-const temporaryTarget = async (parent?: string): Promise<string> => {
-  const directory = parent ?? (await temporaryDirectory());
-  const targetPath = join(directory, "sample-binary");
-  await writeFile(targetPath, "admitted target bytes");
-  return targetPath;
+const temporaryLauncher = async (): Promise<string> => {
+  const launcherPath = join(await temporaryDirectory(), "hopper");
+  await writeFile(launcherPath, "launcher fixture");
+  return launcherPath;
 };
 
 const temporaryDirectory = async (): Promise<string> => {

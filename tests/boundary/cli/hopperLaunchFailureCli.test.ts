@@ -5,7 +5,7 @@ import { z } from "zod";
 
 import { workspaceCliTest } from "../../support/cli/workspaceCliFixture.js";
 
-import { acquireHopperTargetLease } from "../../../src/process/HopperLease.js";
+import { acquireMacHopperApplicationLease } from "../../../src/process/HopperLease.js";
 
 const FAILED_LAUNCHER = `#!/bin/sh
 printf 'Cannot launch Hopper!\\nDocument state is unknown.\\n' >&2
@@ -26,7 +26,7 @@ const RetainedRuntime = z.object({
 });
 
 describe("Hopper launcher failure through the one-shot CLI", () => {
-  // Hopper target leases are acquired only for the macOS launcher route.
+  // Hopper application leases are acquired only for the macOS launcher route.
   workspaceCliTest.skipIf(process.platform !== "darwin")(
     "exits after a retained-cleanup failure and releases the target to a retry",
     { timeout: 90_000 },
@@ -90,10 +90,8 @@ describe("Hopper launcher failure through the one-shot CLI", () => {
           });
         }
       } finally {
-        const recovered = await acquireHopperTargetLease({
-          targetPath,
-          targetKind: "executable",
-          loaderArgs,
+        const recovered = await acquireMacHopperApplicationLease({
+          launcherPath,
           runId: "failed-cli-test-cleanup",
         });
         expect(recovered.acquired).toBe(true);

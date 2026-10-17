@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { expect, it, onTestFinished } from "vitest";
 
 import { snapshotHopperRuntime } from "../../../../scripts/lib/real-hopper-cleanup.mjs";
-import { acquireHopperTargetLease } from "../../../../src/process/HopperLease.js";
+import { acquireMacHopperApplicationLease } from "../../../../src/process/HopperLease.js";
 import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js";
 
 it.skipIf(process.platform === "win32")(
@@ -14,14 +14,13 @@ it.skipIf(process.platform === "win32")(
     const targetPath = join(parent, "target");
     await writeFile(targetPath, "source-owned lease target");
     const before = await snapshotHopperRuntime(parent, directory);
-    const acquired = await acquireHopperTargetLease({
-      targetPath,
-      targetKind: "executable",
-      loaderArgs: [],
+    const acquired = await acquireMacHopperApplicationLease({
+      launcherPath: targetPath,
       runId: "released-verifier-lease",
       directory,
     });
-    if (!acquired.acquired) throw new Error("Expected the owned target lease");
+    if (!acquired.acquired)
+      throw new Error("Expected the owned application lease");
     await acquired.lease.release();
 
     expect(await readdir(directory)).toEqual([]);
@@ -36,14 +35,13 @@ it.skipIf(process.platform === "win32")(
     const directory = join(parent, "rea-hopper-501");
     const targetPath = join(parent, "target");
     await writeFile(targetPath, "source-owned lease target");
-    const acquired = await acquireHopperTargetLease({
-      targetPath,
-      targetKind: "executable",
-      loaderArgs: [],
+    const acquired = await acquireMacHopperApplicationLease({
+      launcherPath: targetPath,
       runId: "retained-verifier-lease",
       directory,
     });
-    if (!acquired.acquired) throw new Error("Expected the owned target lease");
+    if (!acquired.acquired)
+      throw new Error("Expected the owned application lease");
     try {
       const children = await readdir(directory);
       expect(children).toHaveLength(1);

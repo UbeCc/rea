@@ -9,7 +9,7 @@ import type {
   BridgeSession,
 } from "../../../src/hopper/BridgeLauncher.js";
 import { HopperClient } from "../../../src/hopper/HopperClient.js";
-import { acquireHopperTargetLease } from "../../../src/process/HopperLease.js";
+import { acquireMacHopperApplicationLease } from "../../../src/process/HopperLease.js";
 import { cleanupOwnedProcessGroup } from "../../../src/process/ProcessOwnership.js";
 import { spawnOwnedProviderProcess } from "../../../src/process/ProviderProcess.js";
 import { hopperFixturePath } from "../providers/hopper/hopperClient.fixture.js";
@@ -42,10 +42,8 @@ class RetryingHopperLauncher implements BridgeLauncher {
   ) {}
 
   acquire(runId: string) {
-    return acquireHopperTargetLease({
-      targetPath: this.targetPath,
-      targetKind: "database",
-      loaderArgs: [],
+    return acquireMacHopperApplicationLease({
+      launcherPath: this.targetPath,
       runId,
       directory: this.leaseDirectory,
     });

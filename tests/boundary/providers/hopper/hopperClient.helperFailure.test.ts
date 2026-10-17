@@ -15,7 +15,7 @@ import type {
 } from "../../../../src/hopper/BridgeLauncher.js";
 import { HopperApplicationLauncher } from "../../../../src/hopper/BridgeLauncher.js";
 import { HopperClient } from "../../../../src/hopper/HopperClient.js";
-import { acquireHopperTargetLease } from "../../../../src/process/HopperLease.js";
+import { acquireMacHopperApplicationLease } from "../../../../src/process/HopperLease.js";
 import { HopperFixtureLauncher } from "./hopperClient.fixture.js";
 
 // Failure assertions keep the external document unknown. Teardown then publishes
@@ -182,14 +182,12 @@ it.skipIf(process.platform !== "darwin")(
     await expect(access(session.directory)).rejects.toMatchObject({
       code: "ENOENT",
     });
-    const lease = await acquireHopperTargetLease({
-      targetPath,
-      targetKind: "executable",
-      loaderArgs,
+    const lease = await acquireMacHopperApplicationLease({
+      launcherPath: process.execPath,
       runId: "spotlight-retry-proof",
     });
     if (!lease.acquired)
-      throw new Error("Spotlight failure retained the target lease");
+      throw new Error("Spotlight failure retained the application lease");
     await lease.lease.release();
     expect(await client.start()).toMatchObject({ ok: true });
     expect(await client.callTool("echo", { value: "retried" })).toEqual({

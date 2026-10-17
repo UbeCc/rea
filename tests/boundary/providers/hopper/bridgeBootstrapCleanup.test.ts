@@ -25,7 +25,7 @@ it.each(["failed", "cancelled"] as const)(
       },
       {
         platform: "darwin",
-        acquireTargetLease: async () => ({
+        acquireApplicationLease: async () => ({
           acquired: true,
           lease: {
             release: async () => {
