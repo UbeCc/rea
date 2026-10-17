@@ -467,37 +467,85 @@ describe("Ghidra raw-binary profile", () => {
 });
 
 describe("Ghidra Mach-O slice support", () => {
-  it("refuses universal targets whose selected slice cannot be enforced", () => {
-    const ghidra = provider();
+  it("commits the selected universal slice and imports it as a thin image", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "rea-ghidra-fat-"));
+    onTestFinished(() => rm(directory, { recursive: true, force: true }));
+    // FAT32 with x86_64 at 0x1000 and arm64 at 0x2000, 64 bytes each.
+    const container = Buffer.alloc(0x2000 + 64, 0);
+    container.writeUInt32BE(0xcafebabe, 0);
+    container.writeUInt32BE(2, 4);
+    for (const [index, cpuType] of [0x01000007, 0x0100000c].entries()) {
+      const offset = 0x1000 * (index + 1);
+      container.writeUInt32BE(cpuType, 8 + index * 20);
+      container.writeUInt32BE(index === 0 ? 3 : 0, 12 + index * 20);
+      container.writeUInt32BE(offset, 16 + index * 20);
+      container.writeUInt32BE(64, 20 + index * 20);
+      container.writeUInt32BE(12, 24 + index * 20);
+      container.writeUInt32LE(0xfeedfacf, offset);
+      container.writeUInt32LE(cpuType, offset + 4);
+      container.writeUInt32LE(index === 0 ? 3 : 0, offset + 8);
+    }
+    const path = join(directory, "universal");
+    await writeFile(path, container);
     const universal: BinaryTarget = {
-      path: "/tmp/fixture",
-      sha256: "a".repeat(64),
+      path,
+      sha256: createHash("sha256").update(container).digest("hex"),
       kind: "executable",
       format: "mach-o-universal",
       architecture: "arm64",
       availableArchitectures: ["x86_64", "arm64"],
-      universalSlice: { offset: 0, size: 32 },
+      universalSlice: { offset: 0x2000, size: 64 },
     };
+    const options: Parameters<GhidraProviderClientFactory>[0][] = [];
+    const ghidra = provider(installationHost(), (selected) => {
+      options.push(selected);
+      return {
+        start: () => Promise.resolve(ok(sessionInfo())),
+        callTool: () => Promise.resolve(ok(null)),
+        close: () => Promise.resolve(ok(null)),
+      };
+    });
 
     expect(ghidra.inspectTargetSupport(universal)).toMatchObject({
-      status: "unsupported",
-      code: "architecture_unsupported",
-      reason: expect.stringContaining("universal Mach-O"),
-      diagnostics: {
-        architecture: "arm64",
-        available_architectures: ["x86_64", "arm64"],
-      },
+      status: "supported",
     });
-    expect(
-      ghidra.inspectTargetSupport(executableTarget("mach-o", "arm64")),
-    ).toMatchObject({ status: "supported" });
+    const resolved = await ghidra.resolveAnalysisProfile(universal);
+    if (!resolved.ok) throw resolved.error;
+    const profile = resolved.value.profile;
+    if (profile === null) throw new Error("Expected a bound Ghidra profile");
+    expect(profile.parameters.prepared_image).toMatchObject({
+      method: "fat32_thin_slice",
+      architecture_count: 2,
+      source_offset: 0x2000,
+      byte_length: 64,
+      cpu_type: 0x0100000c,
+      cpu_subtype: 0,
+    });
+    const client = ghidra.createClient(universal, profile);
+    expect((await client.execute("health", {})).ok).toBe(true);
+    expect(options[0]).toMatchObject({
+      targetSha256: universal.sha256,
+      preparedImage: profile.parameters.prepared_image,
+    });
+    await client.close();
 
-    expect(
-      ghidra.inspectTargetSupport({
-        ...universal,
-        availableArchitectures: ["arm64"] as const,
-      }),
-    ).toMatchObject({ status: "supported" });
+    // A universal target without its committed slice cannot be imported.
+    const { prepared_image: _omitted, ...withoutSlice } = profile.parameters;
+    const uncommitted = ghidra.createClient(
+      universal,
+      createAnalysisProfile(profile.provider, withoutSlice),
+    );
+    const refused = await uncommitted.execute("health", {});
+    expect(refused.ok).toBe(false);
+    expect(options).toHaveLength(1);
+    await uncommitted.close();
+
+    // A missing slice fails while resolving the profile, before any import.
+    const missing = await ghidra.resolveAnalysisProfile({
+      ...universal,
+      architecture: "x86",
+    });
+    expect(missing.ok).toBe(false);
   });
 });
 

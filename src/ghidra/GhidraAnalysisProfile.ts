@@ -28,6 +28,10 @@ import {
   ghidraPowerPcProfileParameters,
 } from "./GhidraPowerPcProfile.js";
 import { ghidraRawBinaryLanguage } from "./GhidraRawBinaryLanguage.js";
+import {
+  resolveMachOThinSlice,
+  type MachOThinSlice,
+} from "../artifacts/apple/MachOThinSlice.js";
 
 import {
   ghidraProcessorUnsupportedReason,
@@ -206,11 +210,22 @@ export const resolveGhidraAnalysisProfile = async (
         ),
       ),
     );
+  // Ghidra's headless importer cannot be told which FAT slice to load. Commit
+  // the caller-selected slice so the session imports an owned thin copy.
+  let preparedImage: MachOThinSlice | undefined;
+  if (target.format === "mach-o-universal") {
+    const slice = await resolveMachOThinSlice(target, signal);
+    if (!slice.ok) return slice;
+    preparedImage = slice.value;
+  }
   return Promise.resolve(
     ok({
       profile: createAnalysisProfile(provider, {
         target_kind: target.kind,
         target_format: target.format,
+        ...(preparedImage === undefined
+          ? {}
+          : { prepared_image: { ...preparedImage } }),
         ...(target.format === "pe"
           ? {
               executable_role: target.executableRole ?? null,

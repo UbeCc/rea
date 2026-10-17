@@ -124,6 +124,9 @@ public final class ReaGhidraBridge extends HeadlessScript {
     private static final Gson GSON = new GsonBuilder().serializeNulls().create();
     private final Map<FileBytes, Boolean> targetSourceIdentity = new IdentityHashMap<>();
     private String admittedTargetSha256;
+    /** Source-file offset of the imported bytes; nonzero for a universal Mach-O slice. */
+    private long loadedSourceOffset;
+    private long loadedByteLength = -1;
     private static final Set<String> DESCRIPTOR_KEYS = Set.of(
         "transport",
         "endpoint_path",
@@ -222,16 +225,23 @@ public final class ReaGhidraBridge extends HeadlessScript {
             throw new IllegalStateException("Ghidra provider version does not match the session");
         }
         String importedSha256 = currentProgram.getExecutableSHA256();
+        String expectedImportedSha256 = descriptor.loadedImage == null
+            ? descriptor.targetSha256 : requireSha256(descriptor.loadedImage, "sha256");
         if (importedSha256 == null ||
             !constantTimeEquals(
                 importedSha256.toLowerCase(Locale.ROOT),
-                descriptor.targetSha256
+                expectedImportedSha256
             )) {
             throw new IllegalStateException(
                 "Ghidra imported-byte digest does not match the admitted target"
             );
         }
-        admittedTargetSha256 = descriptor.targetSha256;
+        // Target-file offsets are reported in the admitted source's coordinates.
+        admittedTargetSha256 = expectedImportedSha256;
+        if (descriptor.loadedImage != null) {
+            loadedSourceOffset = requireSafeNonNegative(descriptor.loadedImage, "source_offset");
+            loadedByteLength = requireSafeNonNegative(descriptor.loadedImage, "byte_length");
+        }
         // GhidraScript wraps run() in a transaction. End it before serving so
         // each edit owns a real outer transaction and can roll back immediately.
         end(true);
@@ -895,6 +905,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
             offset = candidate;
             mappings++;
         }
+        if (offset != null) offset += loadedSourceOffset;
         return new TargetFileOffset(mappings == 1 && offset <= 9007199254740991L ? offset : null, mappings);
     }
 
@@ -978,6 +989,12 @@ public final class ReaGhidraBridge extends HeadlessScript {
         if (parsed.compareTo(BigInteger.valueOf(9007199254740991L)) > 0)
             throw new RequestFailure("invalid_request", "File offset exceeds the exact JSON integer range");
         long offset = parsed.longValueExact();
+        if (loadedByteLength >= 0 &&
+            (offset < loadedSourceOffset || offset - loadedSourceOffset >= loadedByteLength))
+            throw new RequestFailure("not_found", "File offset " + coordinate +
+                " lies outside the imported Mach-O slice at source offsets [0x" + Long.toHexString(loadedSourceOffset) +
+                ", 0x" + Long.toHexString(loadedSourceOffset + loadedByteLength) + ")");
+        long importedOffset = offset - loadedSourceOffset;
         monitor.checkCancelled();
         // Ghidra's convenience lookup spans every FileBytes and uses coordinates
         // local to each object. Only a complete, digest-matched target source
@@ -988,7 +1005,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
                 monitor.checkCancelled();
                 FileBytes backing = source.getFileBytes().orElse(null);
                 if (backing == null || !isTargetSource(backing)) continue;
-                Address mapped = source.locateAddressForFileOffset(offset);
+                Address mapped = source.locateAddressForFileOffset(importedOffset);
                 if (mapped != null) mappedAddresses.add(mapped);
             }
         }
@@ -4708,6 +4725,8 @@ public final class ReaGhidraBridge extends HeadlessScript {
         Set<String> keys = new HashSet<>(DESCRIPTOR_KEYS);
         if (parsed.isJsonObject() && parsed.getAsJsonObject().has("analysis_extensions"))
             keys.add("analysis_extensions");
+        if (parsed.isJsonObject() && parsed.getAsJsonObject().has("loaded_image"))
+            keys.add("loaded_image");
         JsonObject object = requireObject(parsed, keys);
         return new SessionDescriptor(
             requireString(object, "transport"),
@@ -4717,7 +4736,10 @@ public final class ReaGhidraBridge extends HeadlessScript {
             requireSha256(object, "target_sha256"),
             requireString(object, "provider_version"),
             requireString(object, "profile_digest"),
-            object.has("analysis_extensions") ? object.getAsJsonArray("analysis_extensions") : new JsonArray()
+            object.has("analysis_extensions") ? object.getAsJsonArray("analysis_extensions") : new JsonArray(),
+            object.has("loaded_image")
+                ? requireObject(object.get("loaded_image"), Set.of("sha256", "source_offset", "byte_length"))
+                : null
         );
     }
 
@@ -4791,6 +4813,24 @@ public final class ReaGhidraBridge extends HeadlessScript {
             throw new IllegalArgumentException(name + " must be lowercase SHA-256");
         }
         return value;
+    }
+
+    private static long requireSafeNonNegative(JsonObject object, String name) {
+        JsonElement value = object.get(name);
+        if (value == null || !value.isJsonPrimitive() || !value.getAsJsonPrimitive().isNumber()) {
+            throw new IllegalArgumentException(name + " must be a JSON integer");
+        }
+        BigInteger result;
+        try {
+            result = value.getAsBigDecimal().toBigIntegerExact();
+        }
+        catch (ArithmeticException exception) {
+            throw new IllegalArgumentException(name + " must be a JSON integer");
+        }
+        if (result.signum() < 0 || result.compareTo(BigInteger.valueOf(9007199254740991L)) > 0) {
+            throw new IllegalArgumentException(name + " is outside the exact JSON integer range");
+        }
+        return result.longValueExact();
     }
 
     private static int requireInteger(JsonObject object, String name) {
@@ -4922,7 +4962,8 @@ public final class ReaGhidraBridge extends HeadlessScript {
         String targetSha256,
         String providerVersion,
         String profileDigest,
-        JsonArray analysisExtensions
+        JsonArray analysisExtensions,
+        JsonObject loadedImage
     ) {}
     private record Request(int id, String method, JsonObject params) {}
 

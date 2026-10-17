@@ -1,3 +1,4 @@
+import type { MachOThinSlice } from "../artifacts/apple/MachOThinSlice.js";
 import type { Logger } from "pino";
 import type { Result } from "../domain/result.js";
 import type { GhidraLauncher } from "./GhidraLauncher.js";
@@ -36,6 +37,11 @@ export interface GhidraClientOptions {
   readonly runId?: string;
   readonly targetPath: string;
   readonly targetSha256: string;
+  /**
+   * Committed universal Mach-O slice. The snapshot then contains only these
+   * bytes, while targetSha256 still identifies the complete source.
+   */
+  readonly preparedImage?: MachOThinSlice;
   /** Installation host shared by runtime allocation and snapshot admission. */
   readonly platform?: NodeJS.Platform;
   readonly transport?: GhidraTransportKind;

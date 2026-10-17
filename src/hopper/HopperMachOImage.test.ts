@@ -6,10 +6,8 @@ import { expect, it } from "vitest";
 
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
-import {
-  prepareHopperMachOImage,
-  resolveHopperMachOImage,
-} from "./HopperMachOImage.js";
+import { resolveMachOThinSlice } from "../artifacts/apple/MachOThinSlice.js";
+import { prepareHopperMachOImage } from "./HopperMachOImage.js";
 
 const CPU_TYPES = { x86_64: 0x01000007, arm64: 0x0100000c } as const;
 const FAT32_ALIGNMENT = 12;
@@ -96,7 +94,7 @@ const fat32Target = (
 });
 
 const requireResolved = (
-  result: Awaited<ReturnType<typeof resolveHopperMachOImage>>,
+  result: Awaited<ReturnType<typeof resolveMachOThinSlice>>,
 ) => {
   if (!result.ok)
     throw new Error(
@@ -113,7 +111,7 @@ it.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
     await writeFile(path, Buffer.alloc(64));
     await chmod(path, 0);
     try {
-      const result = await resolveHopperMachOImage({
+      const result = await resolveMachOThinSlice({
         path,
         sha256: "0".repeat(64),
         kind: "executable",
@@ -138,7 +136,7 @@ it("rejects an ELF target before attempting FAT source preparation", async () =>
   const directory = await createTestTempDirectory("rea-hopper-mips-boundary-");
   // No file is created: format validation must precede any filesystem lookup.
   const path = join(directory, "mips.elf");
-  const result = await resolveHopperMachOImage({
+  const result = await resolveMachOThinSlice({
     path,
     sha256: "0".repeat(64),
     kind: "executable",
@@ -152,7 +150,7 @@ it("rejects an ELF target before attempting FAT source preparation", async () =>
   expect(result.error).toMatchObject({
     _tag: "BinaryTargetError",
     path,
-    reason: "Hopper FAT image preparation requires a Mach-O target",
+    reason: "FAT thin-slice preparation requires a Mach-O target",
   });
 });
 
@@ -166,7 +164,7 @@ it("selects the plain-arm64-decodable arm64e slice from an Apple-style FAT32 con
   ]);
   const path = await writeFixture(directory, "system.fat", fixture);
   const result = requireResolved(
-    await resolveHopperMachOImage(fat32Target(path, fixture, "arm64")),
+    await resolveMachOThinSlice(fat32Target(path, fixture, "arm64")),
   );
   expect(result).toMatchObject({
     method: "fat32_thin_slice",
@@ -194,7 +192,7 @@ it("ranks capability-bearing arm64 subtypes by base and retains raw identity", a
   ]);
   const path = await writeFixture(directory, "system.fat", fixture);
   const selected = requireResolved(
-    await resolveHopperMachOImage(fat32Target(path, fixture, "arm64")),
+    await resolveMachOThinSlice(fat32Target(path, fixture, "arm64")),
   );
   expect(selected).toMatchObject({
     source_offset: fixture.sliceOffsets[1],
@@ -211,7 +209,7 @@ it("fails closed when capability variants share the preferred arm64e base", asyn
     { cpuType: CPU_TYPES.arm64, cpuSubtype: 0x81000002 },
   ]);
   const path = await writeFixture(directory, "ambiguous.fat", fixture);
-  const result = await resolveHopperMachOImage(
+  const result = await resolveMachOThinSlice(
     fat32Target(path, fixture, "arm64"),
   );
   if (result.ok || result.error._tag !== "BinaryTargetError")
@@ -229,7 +227,7 @@ it("prefers cpusubtype 2 over 12 regardless of FAT32 table order", async () => {
   ]);
   const path = await writeFixture(directory, "reordered.fat", fixture);
   const result = requireResolved(
-    await resolveHopperMachOImage(fat32Target(path, fixture, "arm64")),
+    await resolveMachOThinSlice(fat32Target(path, fixture, "arm64")),
   );
   expect(result).toMatchObject({
     cpu_subtype: ARM64E,
@@ -245,7 +243,7 @@ it("prefers a plain arm64 slice over arm64e in a FAT32 container", async () => {
   ]);
   const path = await writeFixture(directory, "plain.fat", fixture);
   const result = requireResolved(
-    await resolveHopperMachOImage(fat32Target(path, fixture, "arm64")),
+    await resolveMachOThinSlice(fat32Target(path, fixture, "arm64")),
   );
   expect(result).toMatchObject({
     cpu_subtype: 0,
@@ -260,7 +258,7 @@ it("keeps a lone arm64e.x1 FAT32 slice selectable to preserve today's open behav
   ]);
   const path = await writeFixture(directory, "lone.fat", fixture);
   const result = requireResolved(
-    await resolveHopperMachOImage(fat32Target(path, fixture, "arm64")),
+    await resolveMachOThinSlice(fat32Target(path, fixture, "arm64")),
   );
   expect(result).toMatchObject({ cpu_subtype: ARM64E_X1 });
 });
@@ -272,7 +270,7 @@ it("still fails closed when two arm64e.x1 FAT32 slices compete", async () => {
     { cpuType: CPU_TYPES.arm64, cpuSubtype: ARM64E_X1 },
   ]);
   const path = await writeFixture(directory, "ambiguous.fat", fixture);
-  const result = await resolveHopperMachOImage(
+  const result = await resolveMachOThinSlice(
     fat32Target(path, fixture, "arm64"),
   );
   if (result.ok) throw new Error("Ambiguous FAT32 selection succeeded");
@@ -289,7 +287,7 @@ it("selects the single x86_64 slice of a FAT32 container for an x86_64 target", 
   ]);
   const path = await writeFixture(directory, "universal.fat", fixture);
   const result = requireResolved(
-    await resolveHopperMachOImage(fat32Target(path, fixture, "x86_64")),
+    await resolveMachOThinSlice(fat32Target(path, fixture, "x86_64")),
   );
   expect(result).toMatchObject({
     cpu_type: CPU_TYPES.x86_64,
@@ -310,7 +308,7 @@ it("parses a little-endian FAT32 table without tying it to slice byte order", as
   );
   const path = await writeFixture(directory, "little.fat", fixture);
   const result = requireResolved(
-    await resolveHopperMachOImage(fat32Target(path, fixture, "arm64")),
+    await resolveMachOThinSlice(fat32Target(path, fixture, "arm64")),
   );
   expect(result).toMatchObject({
     method: "fat32_thin_slice",
@@ -326,7 +324,7 @@ it("rejects a FAT32 slice whose declared range extends beyond the file", async (
   ]);
   fixture.container.writeUInt32BE(fixture.container.length + 16, 8 + 12);
   const path = await writeFixture(directory, "overrange.fat", fixture);
-  const result = await resolveHopperMachOImage(
+  const result = await resolveMachOThinSlice(
     fat32Target(path, fixture, "arm64"),
   );
   if (result.ok) throw new Error("An overranging FAT32 slice was accepted");
@@ -344,7 +342,7 @@ it("copies exactly the selected FAT32 slice bytes and verifies the source", asyn
   ]);
   const path = await writeFixture(directory, "system.fat", fixture);
   const target = fat32Target(path, fixture, "arm64");
-  const resolved = requireResolved(await resolveHopperMachOImage(target));
+  const resolved = requireResolved(await resolveMachOThinSlice(target));
   const destination = join(directory, "image.macho");
   const prepared = await prepareHopperMachOImage(
     path,
@@ -369,7 +367,7 @@ it("rejects FAT32 preparation when the source table changed after resolution", a
   ]);
   const path = await writeFixture(directory, "system.fat", fixture);
   const target = fat32Target(path, fixture, "arm64");
-  const resolved = requireResolved(await resolveHopperMachOImage(target));
+  const resolved = requireResolved(await resolveMachOThinSlice(target));
   const mutated = Buffer.from(fixture.container);
   mutated.writeUInt32BE(0x01000007, 8);
   await writeFile(path, mutated);

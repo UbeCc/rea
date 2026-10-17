@@ -24,10 +24,8 @@ import {
   type LinuxPrivateDisplaySelection,
 } from "./LinuxPrivateDisplayProbe.js";
 
-import {
-  prepareHopperMachOImage,
-  type HopperMachOImage,
-} from "./HopperMachOImage.js";
+import { prepareHopperMachOImage } from "./HopperMachOImage.js";
+import type { MachOThinSlice } from "../artifacts/apple/MachOThinSlice.js";
 
 import {
   acquireHopperTargetLease,
@@ -98,7 +96,7 @@ interface SharedHopperApplicationLauncherOptions {
   readonly loaderArgs: readonly string[];
   readonly bridgeScriptPath: string;
   readonly preparedImage?: {
-    readonly image: HopperMachOImage;
+    readonly image: MachOThinSlice;
     readonly sourceSha256: string;
   };
 }

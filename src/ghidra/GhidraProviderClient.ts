@@ -1,4 +1,5 @@
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+import { machOThinSliceSchema } from "../artifacts/apple/MachOThinSlice.js";
 import { artifactFilePrimaryFailure } from "../artifacts/ArtifactFileOperation.js";
 import { fileURLToPath } from "node:url";
 import { GHIDRA_BRIDGE_SOURCES } from "./GhidraBridgeSources.js";
@@ -514,6 +515,26 @@ export const createGhidraProviderClient = (input: {
       }),
     );
 
+  const preparedImage =
+    committedProfile.parameters.prepared_image === undefined
+      ? undefined
+      : machOThinSliceSchema.safeParse(
+          committedProfile.parameters.prepared_image,
+        );
+  if (
+    preparedImage?.success === false ||
+    (preparedImage === undefined) !== (target.format !== "mach-o-universal")
+  )
+    return err(
+      new ProviderAdapterError("ghidra", "open_binary", {
+        diagnostics: {
+          reason:
+            "The committed universal Mach-O slice is missing or malformed; reopen the target to resolve a new profile.",
+        },
+      }),
+    );
+  const loadedSlice = preparedImage?.data;
+
   const invalidProfile = validateGhidraExtensionProfile(
     extensions,
     config,
@@ -539,6 +560,11 @@ export const createGhidraProviderClient = (input: {
       ? ghidraRawBinaryLanguage(target.architecture)
       : undefined;
   const targetLimitations = [
+    ...(loadedSlice === undefined
+      ? []
+      : [
+          `REA imported a verified thin Mach-O slice (${target.architecture}, ${loadedSlice.byte_length} bytes at source offset ${loadedSlice.source_offset}) copied from the universal source. Target identity, address_to_file_offset, search_bytes and file-offset selectors use original-file coordinates; inspect_native_load_image source files and mappings describe the imported slice.`,
+        ]),
     ...(target.format === "dos-mz"
       ? [
           "DOS MZ uses 16-bit x86 real mode with the Ghidra load segment 0x1000. Returned addresses are linear byte coordinates; they do not identify a unique segment:offset alias.",
@@ -627,6 +653,7 @@ export const createGhidraProviderClient = (input: {
         ? (target.sourcePath ?? target.path)
         : target.path,
     targetSha256: target.sha256,
+    ...(loadedSlice === undefined ? {} : { preparedImage: loadedSlice }),
     transport:
       installation.platform === "win32"
         ? "authenticated-loopback-tcp"

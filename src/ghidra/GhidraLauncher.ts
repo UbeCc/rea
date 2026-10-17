@@ -1,4 +1,5 @@
 import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import type { GhidraLoadedImage } from "./GhidraTargetSnapshot.js";
 import { GHIDRA_BRIDGE_SOURCES } from "./GhidraBridgeSources.js";
 import {
   snapshotGhidraAnalysisSeeds,
@@ -63,6 +64,8 @@ export interface GhidraLaunchSession {
   readonly runId: string;
   readonly targetPath: string;
   readonly targetSha256: string;
+  /** Thin slice in targetPath when targetSha256 names a universal source. */
+  readonly loadedImage?: GhidraLoadedImage;
   readonly providerVersion: string;
   readonly profileDigest: string;
 }
@@ -347,6 +350,15 @@ export class GhidraHeadlessLauncher implements GhidraLauncher {
           token: session.token,
           run_id: session.runId,
           target_sha256: session.targetSha256,
+          ...(session.loadedImage === undefined
+            ? {}
+            : {
+                loaded_image: {
+                  sha256: session.loadedImage.sha256,
+                  source_offset: session.loadedImage.sourceOffset,
+                  byte_length: session.loadedImage.byteLength,
+                },
+              }),
           provider_version: session.providerVersion,
           profile_digest: session.profileDigest,
           ...(extensions.length === 0

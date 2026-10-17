@@ -58,7 +58,10 @@ import {
   parseGhidraSessionInfo,
   type GhidraSessionInfo,
 } from "./GhidraSessionValues.js";
-import { createGhidraTargetSnapshot } from "./GhidraTargetSnapshot.js";
+import {
+  createGhidraTargetSnapshot,
+  type GhidraLoadedImage,
+} from "./GhidraTargetSnapshot.js";
 import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import { artifactFileCancellationCause } from "../artifacts/ArtifactFileOperation.js";
@@ -119,6 +122,7 @@ export class GhidraClient {
   #socketRoot: PrivateRuntimeRoot | undefined;
   #endpointPath: string | undefined;
   #snapshotPath: string | undefined;
+  #loadedImage: GhidraLoadedImage | undefined;
   readonly #snapshotOwners = new Set<OwnedFileHandle>();
   readonly #fileResources = new ArtifactResourceScope();
   readonly #cleanupFailures = new Set<AnalysisError>();
@@ -735,9 +739,13 @@ export class GhidraClient {
           signal: deadline.signal,
           platform: this.#options.platform,
           resourceScope: this.#fileResources,
+          ...(this.#options.preparedImage === undefined
+            ? {}
+            : { slice: this.#options.preparedImage }),
         },
       );
       this.#snapshotPath = snapshot.path;
+      this.#loadedImage = snapshot.loadedImage;
       this.#targetAdmission = snapshot.admission;
     } catch (cause: unknown) {
       const failure =
@@ -770,6 +778,9 @@ export class GhidraClient {
           runId: this.#runId,
           targetPath: this.#snapshotPath,
           targetSha256: this.#options.targetSha256,
+          ...(this.#loadedImage === undefined
+            ? {}
+            : { loadedImage: this.#loadedImage }),
           providerVersion: this.#options.providerVersion,
           profileDigest: this.#options.profileDigest,
         },
@@ -1009,6 +1020,7 @@ export class GhidraClient {
         else throw cause;
       }
       this.#snapshotPath = undefined;
+      this.#loadedImage = undefined;
       this.#endpointPath = undefined;
       this.#token = undefined;
       this.#runId = undefined;

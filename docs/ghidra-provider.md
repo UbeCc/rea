@@ -98,6 +98,21 @@ original target. Ghidra's object-local offsets are not silently treated as
 original-file coordinates. Original-source identity is checked once per source
 object per session; analysis-memory edits do not change the original bytes.
 
+### Universal Mach-O
+
+Ghidra's headless importer cannot be told which slice of a universal (FAT)
+Mach-O to load, so REA commits the slice for the host-selected architecture
+(its FAT table digest, source offset, length and CPU identity) in the analysis
+profile and imports an owned thin copy. The copy is made while hashing the
+complete source; a changed source, table or selected header fails before
+import, and Ghidra's imported-byte digest must match the copied slice. Target
+identity remains the universal file. `address_to_file_offset`, `search_bytes`
+matches and `file-offset:` selectors use original-file coordinates; an offset
+outside the selected slice is reported as unmapped. `inspect_native_load_image`
+source files and mappings describe the imported slice, as the result's
+limitations state. Ambiguous slice selection fails closed; extract the exact
+architecture with `lipo <path> -thin <arch> -output <thin>` in that case.
+
 ELF virtual addresses and file offsets are
 different coordinates. Ghidra can rebase a PIE ELF during import: in the
 source-owned verification fixture, ELF entry `0x1013` becomes Ghidra procedure

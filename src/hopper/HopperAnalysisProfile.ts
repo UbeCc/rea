@@ -23,9 +23,9 @@ import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import { err, ok, type Result } from "../domain/result.js";
 
 import {
-  resolveHopperMachOImage,
-  type HopperMachOImage,
-} from "./HopperMachOImage.js";
+  resolveMachOThinSlice,
+  type MachOThinSlice,
+} from "../artifacts/apple/MachOThinSlice.js";
 
 interface HopperProfileOptions {
   readonly launcherPath: string;
@@ -51,13 +51,13 @@ export const resolveHopperAnalysisProfile = async (
         ? "fat32"
         : "thin";
   }
-  let preparedImage: HopperMachOImage | undefined;
+  let preparedImage: MachOThinSlice | undefined;
   if (
     target.kind === "executable" &&
     (machoContainer === "fat64" || machoContainer === "fat32") &&
     options.loaderArgsOverride.length === 0
   ) {
-    const resolved = await resolveHopperMachOImage(target, options.signal);
+    const resolved = await resolveMachOThinSlice(target, options.signal);
     if (!resolved.ok) return resolved;
     preparedImage = resolved.value;
   }

@@ -32,7 +32,7 @@ import {
 import { mapHopperFileOffset } from "./HopperFileOffset.js";
 import { HopperRegexSearch } from "./HopperRegexSearch.js";
 import { HopperClient } from "./HopperClient.js";
-import { hopperMachOImageSchema } from "./HopperMachOImage.js";
+import { machOThinSliceSchema } from "../artifacts/apple/MachOThinSlice.js";
 
 import {
   CAPABILITIES,
@@ -201,7 +201,7 @@ export class HopperProvider implements AnalysisProviderCandidate {
     const parsedImage =
       preparation === undefined
         ? undefined
-        : hopperMachOImageSchema.safeParse(preparation);
+        : machOThinSliceSchema.safeParse(preparation);
     if (parsedImage?.success === false)
       return {
         execute: (operation) =>

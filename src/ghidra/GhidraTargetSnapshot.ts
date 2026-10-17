@@ -21,6 +21,10 @@ import {
 } from "../domain/analysisErrorCore.js";
 import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import {
+  MachOThinSliceExtraction,
+  type MachOThinSlice,
+} from "../artifacts/apple/MachOThinSlice.js";
+import {
   WindowsSnapshotCancelledError,
   windowsPrivateRuntime,
 } from "../windows/WindowsPrivateRuntime.js";
@@ -28,8 +32,18 @@ import {
 /** Immutable target copy admitted to one ephemeral Ghidra import. */
 export interface GhidraTargetSnapshot {
   readonly path: string;
+  /** Digest of the complete admitted source. */
   readonly sha256: string;
   readonly admission?: JsonValue;
+  /** The thin slice Ghidra imports when the source is a universal Mach-O. */
+  readonly loadedImage?: GhidraLoadedImage;
+}
+
+/** Bytes Ghidra imports from a larger source, and their source coordinates. */
+export interface GhidraLoadedImage {
+  readonly sha256: string;
+  readonly sourceOffset: number;
+  readonly byteLength: number;
 }
 
 /** Copy one target and require its bytes to match the parsed target identity. */
@@ -41,6 +55,8 @@ export const createGhidraTargetSnapshot = async (
     readonly signal?: AbortSignal;
     readonly platform?: NodeJS.Platform;
     readonly resourceScope?: ArtifactResourceScope;
+    /** Copy only this committed universal Mach-O slice. */
+    readonly slice?: MachOThinSlice;
   } = {},
 ): Promise<GhidraTargetSnapshot> => {
   if (!/^[a-f0-9]{64}$/u.test(expectedSha256))
@@ -50,7 +66,12 @@ export const createGhidraTargetSnapshot = async (
     runtimeRoot,
     `target-${expectedSha256.slice(0, 12)}${suffix}`,
   );
+  const slice = options.slice;
   if ((options.platform ?? process.platform) === "win32") {
+    if (slice !== undefined)
+      throw new TypeError(
+        "Windows Ghidra snapshots do not prepare universal Mach-O slices",
+      );
     const observed = await windowsPrivateRuntime(runtimeRoot)
       .snapshot(
         sourcePath,
@@ -95,6 +116,10 @@ export const createGhidraTargetSnapshot = async (
             async (destination) => {
               await destination.chmod(0o600);
               const hash = createHash("sha256");
+              const extraction =
+                slice === undefined
+                  ? undefined
+                  : new MachOThinSliceExtraction(slice);
               const input = readArtifactFileChunks(source, {
                 end: initial.size,
                 signal: options.signal,
@@ -103,7 +128,9 @@ export const createGhidraTargetSnapshot = async (
                 assertArtifactReadActive(options.signal);
                 // writeFile completes the entire supplied chunk at the current
                 // descriptor offset. Only this owner closes either descriptor.
-                await destination.writeFile(chunk);
+                const selected =
+                  extraction === undefined ? chunk : extraction.accept(chunk);
+                if (selected.length > 0) await destination.writeFile(selected);
                 hash.update(chunk);
                 assertArtifactReadActive(options.signal);
               }
@@ -122,7 +149,27 @@ export const createGhidraTargetSnapshot = async (
                   `Ghidra target snapshot digest or source identity changed: expected ${expectedSha256}, observed ${observed}`,
                 );
               assertArtifactReadActive(options.signal);
-              return { path: snapshotPath, sha256: observed };
+              if (extraction === undefined || slice === undefined)
+                return { path: snapshotPath, sha256: observed };
+              const loaded = extraction.finish();
+              if (
+                !loaded.containerMatches ||
+                loaded.copiedBytes !== slice.byte_length
+              )
+                throw new AnalysisArtifactChangedError(
+                  "open_binary",
+                  sourcePath,
+                  `The universal Mach-O no longer agrees with its committed architecture table or selected ${slice.byte_length}-byte slice at offset ${slice.source_offset}; copied ${loaded.copiedBytes} bytes`,
+                );
+              return {
+                path: snapshotPath,
+                sha256: observed,
+                loadedImage: {
+                  sha256: loaded.sliceSha256,
+                  sourceOffset: slice.source_offset,
+                  byteLength: slice.byte_length,
+                },
+              };
             },
           );
         },
