@@ -373,7 +373,25 @@ const settleLauncherExit = async (
   if (launcher === undefined) return processes;
   const reason = launcherIdentityFailure(launcher, ownership);
   if (reason === null) return processes;
-  const refreshed = await readLiveProcessTable(host);
+  let refreshed = await readLiveProcessTable(host);
+  // An exiting process has released its argument vector, so the table shows
+  // only its bracketed kernel name (`[java]`). Unmapping a large JVM heap can
+  // keep it listed briefly under load; wait a bounded time for it to leave.
+  for (
+    let attempt = 0;
+    attempt < EXITING_LAUNCHER_REFRESH_ATTEMPTS &&
+    refreshed.available &&
+    refreshed.processes.some(
+      ({ pid, command }) =>
+        pid === launcher.pid && EXITING_COMMAND.test(command),
+    );
+    attempt += 1
+  ) {
+    await new Promise((resolve) =>
+      setTimeout(resolve, EXITING_LAUNCHER_REFRESH_DELAY_MS),
+    );
+    refreshed = await readLiveProcessTable(host);
+  }
   if (
     refreshed.available &&
     !refreshed.processes.some(({ pid }) => pid === launcher.pid)
@@ -870,6 +888,10 @@ interface UnreadableTokenCandidate {
 }
 
 const TOKEN_READ_RETRY_ATTEMPTS = 3;
+/** A process table entry whose argument vector is gone: `[name]`. */
+const EXITING_COMMAND = /^\[[^\]]+\]$/u;
+const EXITING_LAUNCHER_REFRESH_ATTEMPTS = 25;
+const EXITING_LAUNCHER_REFRESH_DELAY_MS = 200;
 const TOKEN_READ_RETRY_DELAY_MS = 40;
 
 /** Darwin reports this when the kernel withholds a platform binary's environment. */

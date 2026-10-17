@@ -59,3 +59,23 @@ it("still reports a readable foreign token as a mismatch", async () => {
     reason: "process ownership token mismatch for PID(s): 101",
   });
 });
+
+it("waits for an exiting launcher shown by its bracketed kernel name", async () => {
+  let snapshots = 0;
+  const adapter: ProcessOwnershipHost = {
+    platform: "linux",
+    // The JVM launcher is listed as `[java]` for three snapshots, then exits.
+    listProcesses: () =>
+      Promise.resolve(
+        (snapshots += 1) <= 3 ? [{ ...launcher, command: "[java]" }] : [],
+      ),
+    environment: () => Promise.resolve({ REA_PROCESS_RUN_ID: "run-token" }),
+    signalGroup: vi.fn(),
+  };
+  const result = await cleanupOwnedProcessGroup(
+    { ...ownership, expectedCommand: "/opt/jdk/bin/java" },
+    adapter,
+  );
+  expect(result).toMatchObject({ cleaned: true });
+  expect(snapshots).toBeGreaterThan(3);
+});
