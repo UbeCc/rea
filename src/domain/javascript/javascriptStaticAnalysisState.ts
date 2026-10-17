@@ -92,6 +92,8 @@ export interface JavaScriptReferenceInput {
   readonly node: t.Node;
   readonly kind: JavaScriptStaticReference["kind"];
   readonly specifier: string | undefined;
+  /** Browser worker URL text resolved against the loading document's base URL. */
+  readonly documentUrl?: string | undefined;
 }
 
 /** Candidate route or network endpoint literal. */

@@ -27,6 +27,7 @@ import {
   type ArtifactPathResolution,
 } from "./JavaScriptArtifactPathResolution.js";
 import { moduleResolutionModeForJavaScriptReference } from "../../domain/javascript/javascriptModuleResolutionMode.js";
+import { documentsLoadingScript } from "./JavaScriptArtifactGraphDocuments.js";
 
 type StaticReference = JavaScriptStaticAnalysis["references"][number];
 type StaticEndpoint = JavaScriptStaticAnalysis["endpoints"][number];
@@ -52,7 +53,22 @@ interface ResolvedReference {
   readonly limitations: readonly string[];
   readonly resolutionStatus?: string;
   readonly resolution?: ArtifactPathResolution;
+  /** Per-page outcomes for a URL resolved against loading HTML documents. */
+  readonly documents?: readonly DocumentUrlResolution[];
 }
+
+interface DocumentUrlResolution {
+  readonly html_path: string;
+  readonly base_href: string | null;
+  readonly resolution: ArtifactPathResolution;
+}
+
+const DOCUMENT_URL_LIMITATION =
+  "Browser worker URLs resolve against the loading document's base URL. Only HTML pages in the artifact that statically load this script were considered; documents that load it otherwise are not covered.";
+const UNKNOWN_DOCUMENT_LIMITATION =
+  "No HTML page in the artifact statically loads this script, so the document base URL for this worker URL is unknown.";
+const AMBIGUOUS_DOCUMENT_LIMITATION =
+  "HTML pages that load this script resolve the worker URL differently; each page's outcome is retained.";
 
 /** Project imports, workers, roles, endpoints, storage, and source-map links. */
 export function* addJavaScriptStaticFindingsSteps(
@@ -98,9 +114,11 @@ const addReference = (
       input.value.module_runtime,
     ) ?? input.asset;
   const resolved =
-    input.value.specifier === null
-      ? null
-      : resolveReference(context, input.file.path, input.value, input.coverage);
+    input.value.specifier !== null
+      ? resolveReference(context, input.file.path, input.value, input.coverage)
+      : input.value.document_url === undefined
+        ? null
+        : resolveDocumentUrl(context, input.file, input.value.document_url);
   if (input.value.kind === "worker" || input.value.kind === "service-worker") {
     const worker = context.accumulator.addNode({
       kind: input.value.kind === "worker" ? "worker" : "service-worker",
@@ -118,6 +136,7 @@ const addReference = (
             resolved_path: resolved?.path ?? null,
             resolution_status: resolved?.resolutionStatus ?? null,
             ...artifactPathResolutionProperties(resolved?.resolution),
+            ...documentUrlProperties(input.value, resolved),
           },
           evidence: staticInferenceEvidence({
             sha256: input.file.sha256,
@@ -144,16 +163,21 @@ const addReference = (
       },
       limitations: resolved?.limitations ?? [],
     });
-    if (resolved !== null && resolved.path !== null && resolved.node !== null)
+    for (const target of resolvedTargets(context, resolved))
       addStaticInferenceEdge(context, {
         source: worker,
-        target: resolved.node,
+        target: target.node,
         file: input.file,
         range: input.value.location,
         coverage: input.coverage,
         relation: "maps_to",
-        properties: { resolved_path: resolved.path },
-        limitations: resolved.limitations,
+        properties: {
+          resolved_path: target.path,
+          ...(target.htmlPaths === undefined
+            ? {}
+            : { html_paths: target.htmlPaths }),
+        },
+        limitations: resolved?.limitations ?? [],
       });
     return;
   }
@@ -494,6 +518,118 @@ const addSourceMapEdge = (
       resolution_status: resolution.resolution_status,
       ...artifactPathResolutionProperties(resolution),
     },
+  });
+};
+
+/**
+ * Resolve a browser worker URL against each HTML page that loads its script.
+ * Agreeing pages yield their common outcome; disagreeing pages stay explicit.
+ */
+const resolveDocumentUrl = (
+  context: JavaScriptArtifactGraphContext,
+  file: JavaScriptArtifactFile,
+  documentUrl: string,
+): ResolvedReference => {
+  const documents = documentsLoadingScript(context, file.path).map(
+    ({ html, base_href }) => ({
+      html_path: html.path,
+      base_href,
+      resolution: resolveArtifactPathByContext({
+        declaredPath: documentUrl,
+        sourcePath: html.path,
+        context: "html-reference",
+        files: context.filesByPath,
+        directoryPaths: context.directoryPaths,
+        unanalyzedFiles: context.unanalyzedFiles,
+        htmlBaseHref: base_href,
+      }),
+    }),
+  );
+  const [first] = documents;
+  if (first === undefined)
+    return {
+      path: null,
+      file: null,
+      node: null,
+      limitations: [UNKNOWN_DOCUMENT_LIMITATION],
+      documents,
+    };
+  const pageLimitations = [
+    ...new Set(documents.flatMap(({ resolution }) => resolution.limitations)),
+  ];
+  const agreed = documents.every(
+    ({ resolution }) =>
+      resolution.resolution_status === first.resolution.resolution_status &&
+      resolution.resolved_path === first.resolution.resolved_path,
+  );
+  if (!agreed)
+    return {
+      path: null,
+      file: null,
+      node: null,
+      limitations: [
+        DOCUMENT_URL_LIMITATION,
+        AMBIGUOUS_DOCUMENT_LIMITATION,
+        ...pageLimitations,
+      ],
+      resolutionStatus: "ambiguous",
+      documents,
+    };
+  const path = first.resolution.resolved_path;
+  return {
+    path,
+    file: path === null ? null : (context.filesByPath.get(path) ?? null),
+    node: path === null ? null : (context.fileNodes.get(path) ?? null),
+    limitations: [DOCUMENT_URL_LIMITATION, ...pageLimitations],
+    resolutionStatus: first.resolution.resolution_status,
+    documents,
+  };
+};
+
+/** Graph properties retaining each loading page's worker URL outcome. */
+const documentUrlProperties = (
+  reference: StaticReference,
+  resolved: ResolvedReference | null,
+) =>
+  reference.specifier !== null || reference.document_url === undefined
+    ? {}
+    : {
+        document_url: reference.document_url,
+        loading_documents: (resolved?.documents ?? []).map(
+          ({ html_path, base_href, resolution }) => ({
+            html_path,
+            base_href,
+            resolved_path: resolution.resolved_path,
+            resolution_status: resolution.resolution_status,
+          }),
+        ),
+      };
+
+/** Distinct artifact files a worker reference maps to, with their pages. */
+const resolvedTargets = (
+  context: JavaScriptArtifactGraphContext,
+  resolved: ResolvedReference | null,
+): readonly {
+  readonly path: string;
+  readonly node: ApplicationNode;
+  readonly htmlPaths?: readonly string[];
+}[] => {
+  if (resolved === null) return [];
+  if (resolved.documents === undefined)
+    return resolved.path === null || resolved.node === null
+      ? []
+      : [{ path: resolved.path, node: resolved.node }];
+  const pages = new Map<string, string[]>();
+  for (const { html_path, resolution } of resolved.documents) {
+    if (resolution.resolved_path === null) continue;
+    const existing = pages.get(resolution.resolved_path);
+    if (existing === undefined)
+      pages.set(resolution.resolved_path, [html_path]);
+    else existing.push(html_path);
+  }
+  return [...pages].flatMap(([path, htmlPaths]) => {
+    const node = context.fileNodes.get(path);
+    return node === undefined ? [] : [{ path, node, htmlPaths }];
   });
 };
 

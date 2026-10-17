@@ -12,7 +12,75 @@ import {
 } from "./JavaScriptArtifactGraphEvidence.js";
 import { ELECTRON_MODULE } from "../../domain/javascript/javascriptElectronMemberWrites.js";
 import { completeApplicationCoverage } from "../../domain/javascript/javascriptApplicationEvidenceSchemas.js";
-import { resolveArtifactPathByContext } from "./JavaScriptArtifactPathResolution.js";
+import {
+  resolveArtifactPathByContext,
+  type ArtifactPathResolution,
+} from "./JavaScriptArtifactPathResolution.js";
+import type { JavaScriptHtmlScriptObservation } from "./JavaScriptArtifactAnalysisTypes.js";
+import type { JavaScriptArtifactFile } from "../../domain/javascript/javascriptArtifactFiles.js";
+
+/** One HTML script element and its artifact-confined resolution. */
+interface HtmlScriptLoad {
+  readonly html: JavaScriptArtifactFile;
+  readonly script: JavaScriptHtmlScriptObservation;
+  readonly resolution: ArtifactPathResolution;
+}
+
+const htmlScriptLoadIndex = new WeakMap<
+  JavaScriptArtifactGraphContext,
+  readonly HtmlScriptLoad[]
+>();
+
+/** Resolve every HTML script reference once per graph projection. */
+const htmlScriptLoads = (
+  context: JavaScriptArtifactGraphContext,
+): readonly HtmlScriptLoad[] => {
+  const cached = htmlScriptLoadIndex.get(context);
+  if (cached !== undefined) return cached;
+  const loads = context.analysis.html_scripts.flatMap((script) => {
+    const html = context.filesByPath.get(script.html_path);
+    return html === undefined
+      ? []
+      : [
+          {
+            html,
+            script,
+            resolution: resolveArtifactPathByContext({
+              declaredPath: script.script_path,
+              sourcePath: html.path,
+              context: "html-reference",
+              files: context.filesByPath,
+              directoryPaths: context.directoryPaths,
+              unanalyzedFiles: context.unanalyzedFiles,
+              htmlBaseHref: script.base_href,
+            }),
+          },
+        ];
+  });
+  htmlScriptLoadIndex.set(context, loads);
+  return loads;
+};
+
+/** One HTML page whose document base URL applies to a loaded script. */
+export interface LoadingDocument {
+  readonly html: JavaScriptArtifactFile;
+  readonly base_href: string | null;
+}
+
+/**
+ * HTML pages in the artifact that statically load `scriptPath` with a
+ * `<script src>`. An empty result means the loading document is unknown.
+ */
+export const documentsLoadingScript = (
+  context: JavaScriptArtifactGraphContext,
+  scriptPath: string,
+): readonly LoadingDocument[] => {
+  const documents = new Map<string, LoadingDocument>();
+  for (const { html, script, resolution } of htmlScriptLoads(context))
+    if (resolution.resolved_path === scriptPath && !documents.has(html.path))
+      documents.set(html.path, { html, base_href: script.base_href });
+  return [...documents.values()];
+};
 
 /**
  * Static facts that place the artifact in Electron: an ASAR container, a
@@ -49,16 +117,14 @@ export const addJavaScriptHtmlRoles = (
   const pageKind = hasStaticElectronEvidence(context)
     ? "electron-renderer"
     : "web-page";
-  const byHtml = new Map<string, typeof context.analysis.html_scripts>();
-  for (const script of context.analysis.html_scripts) {
-    const existing = byHtml.get(script.html_path);
-    byHtml.set(
-      script.html_path,
-      existing === undefined ? [script] : [...existing, script],
-    );
+  const byHtml = new Map<string, HtmlScriptLoad[]>();
+  for (const load of htmlScriptLoads(context)) {
+    const existing = byHtml.get(load.html.path);
+    if (existing === undefined) byHtml.set(load.html.path, [load]);
+    else existing.push(load);
   }
-  for (const [htmlPath, scripts] of byHtml) {
-    const html = context.filesByPath.get(htmlPath);
+  for (const loads of byHtml.values()) {
+    const html = loads[0]?.html;
     if (html === undefined) continue;
     const roleResolution = {
       declared_path: html.path,
@@ -87,16 +153,7 @@ export const addJavaScriptHtmlRoles = (
       anchor: html,
       resolution: roleResolution,
     });
-    for (const script of scripts) {
-      const resolution = resolveArtifactPathByContext({
-        declaredPath: script.script_path,
-        sourcePath: html.path,
-        context: "html-reference",
-        files: context.filesByPath,
-        directoryPaths: context.directoryPaths,
-        unanalyzedFiles: context.unanalyzedFiles,
-        htmlBaseHref: script.base_href,
-      });
+    for (const { script, resolution } of loads) {
       const resolvedPath = resolution.resolved_path;
       if (resolvedPath === null) {
         context.accumulator.addNode({

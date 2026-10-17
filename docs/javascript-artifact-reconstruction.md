@@ -241,9 +241,13 @@ Selected bounded text is then parsed as inert data to recover:
   builder-assigned, so original module paths remain unknown;
 - static imports, dynamic imports, CommonJS `require` calls, workers, and
   service workers (only `new Worker(new URL(path, import.meta.url))` resolves
-  relative to the calling module; string worker and service-worker paths use
-  the document base URL or Node's working directory, which static analysis
-  does not establish, so they keep their expression and stay unresolved);
+  relative to the calling module; a literal URL passed to a proven browser
+  `Worker`, `SharedWorker`, or `navigator.serviceWorker.register` is resolved
+  against the base URL of each local HTML page whose `<script src>` loads the
+  calling script, reporting every page's outcome and `ambiguous` when they
+  disagree; without such a page the document base stays unknown. Node
+  `worker_threads` string paths use the process working directory and stay
+  unresolved);
 - route, network endpoint, storage, and vendor-marker observations;
 - embedded third-party libraries inferred from preserved banner comments
   (`/*!`, `@license`) or characteristic API shapes such as jQuery's

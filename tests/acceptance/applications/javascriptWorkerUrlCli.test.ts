@@ -470,28 +470,24 @@ cliTest(
 );
 
 cliTest(
-  "keeps string Worker paths unresolved because the document base is unknown",
+  "resolves string Worker paths against the loading document, not the script",
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-worker-document-base-");
     // A browser resolves these strings against the document base URL, not the
     // calling script; Node resolves them against the working directory.
-    const expressions = {
-      "scripts/main.js": 'new Worker("./worker.js")',
-      "scripts/service.js": 'navigator.serviceWorker.register("./sw.js")',
-    };
     await writeFixtureFiles(root, {
       "index.html": '<script src="./scripts/main.js"></script>',
-      ...Object.fromEntries(
-        Object.entries(expressions).map(([path, code]) => [path, `${code};`]),
-      ),
+      "scripts/main.js": 'new Worker("./worker.js");',
+      // No HTML page loads this script, so its document base stays unknown.
+      "scripts/service.js": 'navigator.serviceWorker.register("./sw.js");',
       "worker.js": "self.postMessage('document-relative worker');",
       "scripts/worker.js": "self.postMessage('script-relative decoy');",
       "scripts/sw.js": "self.postMessage('script-relative decoy');",
     });
 
     const result = await analyzeJavaScriptDirectory("CLI", cli, root);
-    for (const [source, expression] of Object.entries(expressions)) {
-      const node = result.graph.nodes.find(
+    const nodeFor = (source: string) =>
+      result.graph.nodes.find(
         ({ kind, observations }) =>
           (kind === "worker" || kind === "service-worker") &&
           observations.some(
@@ -501,22 +497,34 @@ cliTest(
               evidence.location.value.source === source,
           ),
       );
-      expect(node?.observations).toContainEqual(
-        expect.objectContaining({
-          properties: expect.objectContaining({
-            declared_specifier: null,
-            expression,
-            resolved_path: null,
-          }),
-        }),
-      );
-      expect(
-        result.graph.edges.some(
+    const mappedPaths = (nodeId: string | undefined) =>
+      result.graph.edges
+        .filter(
           ({ relation, source_node_id }) =>
-            relation === "maps_to" && source_node_id === node?.node_id,
-        ),
-      ).toBe(false);
-    }
+            relation === "maps_to" && source_node_id === nodeId,
+        )
+        .map(({ properties }) => properties.resolved_path);
+
+    const worker = nodeFor("scripts/main.js");
+    expect(worker?.observations[0]?.properties).toMatchObject({
+      declared_specifier: null,
+      expression: 'new Worker("./worker.js")',
+      document_url: "./worker.js",
+      resolved_path: "worker.js",
+      resolution_status: "resolved",
+    });
+    expect(mappedPaths(worker?.node_id)).toEqual(["worker.js"]);
+
+    const service = nodeFor("scripts/service.js");
+    expect(service?.observations[0]?.properties).toMatchObject({
+      declared_specifier: null,
+      expression: 'navigator.serviceWorker.register("./sw.js")',
+      document_url: "./sw.js",
+      resolved_path: null,
+      resolution_status: null,
+      loading_documents: [],
+    });
+    expect(mappedPaths(service?.node_id)).toEqual([]);
   },
 );
 

@@ -95,21 +95,30 @@ export const inspectCall = (
       : workerConstructorKind(worker.callee, bindings);
   if (
     workerConstructor !== undefined ||
-    name === "Worker" ||
-    name.endsWith(".Worker")
-  )
+    WORKER_CONSTRUCTORS.some(
+      (candidate) => name === candidate || name.endsWith(`.${candidate}`),
+    )
+  ) {
+    // A string path is relative to the document base URL in a browser and
+    // to the process cwd in Node; the analyzed source's artifact location
+    // establishes neither. Only `new URL(path, import.meta.url)` names a
+    // location relative to this module.
+    const specifier =
+      workerConstructor === undefined || worker === undefined
+        ? undefined
+        : moduleUrlSpecifier(worker, bindings);
     addReference(context, {
       node,
       kind: "worker",
-      // A string path is relative to the document base URL in a browser and
-      // to the process cwd in Node; the analyzed source's artifact location
-      // establishes neither. Only `new URL(path, import.meta.url)` names a
-      // location relative to this module.
-      specifier:
-        workerConstructor === undefined || worker === undefined
-          ? undefined
-          : moduleUrlSpecifier(worker, bindings),
+      specifier,
+      // Only a proven browser constructor resolves a string against the
+      // loading document; a Node Worker path stays relative to its process.
+      documentUrl:
+        workerConstructor === "browser" && specifier === undefined
+          ? stringValue(node.arguments[0])
+          : undefined,
     });
+  }
   // Service worker strings also use the document base URL. The complete called
   // path must retain its platform identity, including the register method.
   if (
@@ -119,12 +128,15 @@ export const inspectCall = (
       "serviceWorker",
       "register",
     ])
-  )
+  ) {
+    const specifier = moduleUrlSpecifier(node, bindings);
     addReference(context, {
       node,
       kind: "service-worker",
-      specifier: moduleUrlSpecifier(node, bindings),
+      specifier,
+      documentUrl: specifier === undefined ? first : undefined,
     });
+  }
   inspectEndpointCall(node, name, first, context, bindings);
   inspectStorageCall(node, name, first, context);
   if (!t.isNewExpression(node)) inspectNativeBridgeCall(node, context);
@@ -194,21 +206,34 @@ const moduleUrlSpecifier = (
     : undefined;
 };
 
+/** Dedicated and shared browser worker constructors; Node defines only `Worker`. */
+const WORKER_CONSTRUCTORS = ["Worker", "SharedWorker"] as const;
+
 const workerConstructorKind = (
   callee: t.Node,
   bindings: JavaScriptSemanticAnalysisState,
 ): "browser" | "node" | undefined => {
   const node = unwrapJavaScriptExpression(callee).node;
+  const memberName = t.isMemberExpression(node)
+    ? semanticStaticPropertyName(node.property, node.computed)
+    : null;
   const member =
     t.isMemberExpression(node) &&
-    semanticStaticPropertyName(node.property, node.computed) === "Worker";
+    (memberName === "Worker" || memberName === "SharedWorker");
   const root = unwrapJavaScriptExpression(member ? node.object : node).node;
   if (!t.isIdentifier(root)) return undefined;
+  const constructorName = member ? memberName : root.name;
   const browserGlobal = member
     ? ["globalThis", "window", "self"].includes(root.name)
-    : root.name === "Worker";
-  if (browserGlobal && isUnmodifiedGlobalReference(node, bindings, "Worker"))
+    : WORKER_CONSTRUCTORS.some((name) => name === root.name);
+  if (
+    browserGlobal &&
+    constructorName !== null &&
+    isUnmodifiedGlobalReference(node, bindings, constructorName)
+  )
     return "browser";
+  // worker_threads exports no SharedWorker.
+  if (member && memberName !== "Worker") return undefined;
   const binding = resolveSemanticBindingState(bindings, root, root.name);
   const [origin] = binding?.directOrigins ?? [];
   // Named ESM exports and module namespace exports are read-only. Default
@@ -793,6 +818,9 @@ export const addReference = (
       ? {
           specifier: null,
           expression: sourceSlice(context.source, input.node),
+          ...(input.documentUrl === undefined
+            ? {}
+            : { document_url: input.documentUrl }),
         }
       : { specifier, expression: null };
   addLocatedFinding(context, {

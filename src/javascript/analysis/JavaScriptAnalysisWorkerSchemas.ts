@@ -326,6 +326,7 @@ export const javaScriptWorkerStaticAnalysisSchema = z
             ...referenceShape,
             specifier: z.null(),
             expression: z.string(),
+            document_url: z.string().exactOptional(),
           })
           .transform(withRuntime),
       ]),

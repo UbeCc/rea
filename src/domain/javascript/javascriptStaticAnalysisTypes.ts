@@ -37,7 +37,16 @@ interface JavaScriptStaticReferenceState {
 export type JavaScriptStaticReference = JavaScriptStaticReferenceState &
   (
     | { readonly specifier: string; readonly expression: null }
-    | { readonly specifier: null; readonly expression: string }
+    | {
+        readonly specifier: null;
+        readonly expression: string;
+        /**
+         * Literal URL passed to a proven browser `Worker`, `SharedWorker`, or
+         * `navigator.serviceWorker.register`. Browsers resolve it against the
+         * loading document's base URL, which this source alone does not name.
+         */
+        readonly document_url?: string;
+      }
   );
 
 /** A route or network endpoint literal observed in syntax. */
