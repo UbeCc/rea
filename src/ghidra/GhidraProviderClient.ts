@@ -1391,7 +1391,7 @@ const projectObservedJvmMemoryFailure = (
 /** Name the settings that change Ghidra's import-and-analysis startup deadline. */
 const ghidraStartupTimeoutGuidance = (timeoutMs: number) => ({
   userMessage: `Ghidra did not finish importing and analyzing the target within its ${String(timeoutMs)} ms startup deadline (REA_GHIDRA_STARTUP_TIMEOUT_MS).`,
-  remediationAction: `Large binaries can need longer: set REA_GHIDRA_STARTUP_TIMEOUT_MS above ${String(timeoutMs)} in the environment that starts REA, or skip expensive analyzers with REA_GHIDRA_DISABLED_ANALYZERS, then open the target again. An MCP client's own tool-call timeout is separate and may also need raising.`,
+  remediationAction: `Large binaries can need longer: set REA_GHIDRA_STARTUP_TIMEOUT_MS above ${String(timeoutMs)} in the environment that starts REA, or skip expensive analyzers with REA_GHIDRA_DISABLED_ANALYZERS, then open the target again. On Linux and macOS, setting REA_GHIDRA_ANALYSIS_CACHE_DIR lets later sessions on the same target reuse a completed analysis. An MCP client's own tool-call timeout is separate and may also need raising.`,
 });
 
 /** A provider already observed as running can be restarted by reopening. */
