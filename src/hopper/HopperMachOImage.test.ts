@@ -217,6 +217,9 @@ it("fails closed when capability variants share the preferred arm64e base", asyn
       "Expected ambiguous FAT selection to return a BinaryTargetError",
     );
   expect(result.error.reason).toContain("selection for arm64 is ambiguous");
+  expect(result.error.reason).toContain(
+    `lipo ${JSON.stringify(path)} -thin <architecture> -output <thin image>`,
+  );
 });
 
 it("prefers cpusubtype 2 over 12 regardless of FAT32 table order", async () => {

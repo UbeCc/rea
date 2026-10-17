@@ -150,7 +150,7 @@ export const resolveMachOThinSlice = async (
     const selected = selectThinSlice(matches, target.architecture);
     if (selected === undefined)
       return invalid(
-        `FAT selection for ${target.architecture} is ${matches.length === 0 ? "missing" : "ambiguous"}; extract the exact architecture into a thin image before opening it`,
+        `FAT selection for ${target.architecture} is ${matches.length === 0 ? "missing" : "ambiguous"}; list the slices with lipo -detailed_info ${JSON.stringify(target.path)}, extract one with lipo ${JSON.stringify(target.path)} -thin <architecture> -output <thin image>, and open the thin image`,
       );
     return ok({
       method: wide ? "fat64_thin_slice" : "fat32_thin_slice",
