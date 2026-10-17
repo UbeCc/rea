@@ -229,6 +229,10 @@ const finalizeStaticAnalysis = (
         accumulator.moduleRangeIndex,
       ),
     },
+    native_bridges: finalizeLocatedFindings(
+      accumulator.nativeBridges,
+      accumulator.moduleRangeIndex,
+    ),
     limitations,
   };
 };

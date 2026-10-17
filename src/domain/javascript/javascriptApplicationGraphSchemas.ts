@@ -33,6 +33,8 @@ export const JAVASCRIPT_APPLICATION_NODE_KINDS = [
   "context-bridge-api",
   "ipc-channel",
   "ipc-handler",
+  "native-bridge-channel",
+  "web-page",
   "worker",
   "service-worker",
   "endpoint",

@@ -251,7 +251,7 @@ const semanticValue = (
       properties.storage_kind,
       properties.name ?? properties.mechanism,
     );
-  if (node.kind === "ipc-channel")
+  if (node.kind === "ipc-channel" || node.kind === "native-bridge-channel")
     return properties.resolution === "dynamic"
       ? null
       : (exactString(properties.channel) ?? firstLabel(node));
@@ -282,6 +282,7 @@ const semanticValue = (
       "electron-preload",
       "electron-renderer",
       "electron-utility",
+      "web-page",
     ].includes(node.kind)
   )
     return joined(properties.declared_path, properties.resolved_path);

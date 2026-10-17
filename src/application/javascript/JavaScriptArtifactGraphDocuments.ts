@@ -10,13 +10,45 @@ import {
   artifactObservationEvidence,
   staticInferenceEvidence,
 } from "./JavaScriptArtifactGraphEvidence.js";
+import { ELECTRON_MODULE } from "../../domain/javascript/javascriptElectronMemberWrites.js";
 import { completeApplicationCoverage } from "../../domain/javascript/javascriptApplicationEvidenceSchemas.js";
 import { resolveArtifactPathByContext } from "./JavaScriptArtifactPathResolution.js";
 
-/** Project HTML renderer entrypoints and their local script assets. */
+/**
+ * Static facts that place the artifact in Electron: an ASAR container, a
+ * reference to the `electron` module, or a recognized Electron API finding.
+ * Package `main` alone is ordinary Node metadata and is not counted.
+ */
+const hasStaticElectronEvidence = (
+  context: JavaScriptArtifactGraphContext,
+): boolean =>
+  context.snapshot.manifest.root_format === "asar" ||
+  context.fileSet.containers.length > 0 ||
+  context.analysis.files.some(
+    ({ javascript }) =>
+      javascript !== null &&
+      (javascript.references.some(
+        ({ specifier }) =>
+          specifier !== null && ELECTRON_MODULE.test(specifier),
+      ) ||
+        javascript.role_paths.some(({ role }) => role === "preload") ||
+        javascript.electron.browser_windows.length > 0 ||
+        javascript.electron.context_bridge_apis.length > 0 ||
+        javascript.electron.ipc.length > 0 ||
+        javascript.electron.utility_processes.length > 0),
+  );
+
+/**
+ * Project HTML entrypoints and their local script assets. Pages are Electron
+ * renderers only when the artifact carries static Electron evidence;
+ * otherwise they remain host-neutral web pages.
+ */
 export const addJavaScriptHtmlRoles = (
   context: JavaScriptArtifactGraphContext,
 ): void => {
+  const pageKind = hasStaticElectronEvidence(context)
+    ? "electron-renderer"
+    : "web-page";
   const byHtml = new Map<string, typeof context.analysis.html_scripts>();
   for (const script of context.analysis.html_scripts) {
     const existing = byHtml.get(script.html_path);
@@ -36,7 +68,7 @@ export const addJavaScriptHtmlRoles = (
       limitations: [],
     };
     const role = createElectronRoleNode(context, {
-      kind: "electron-renderer",
+      kind: pageKind,
       anchor: html,
       resolution: roleResolution,
       mechanism: "html-script-entrypoint",
@@ -45,7 +77,10 @@ export const addJavaScriptHtmlRoles = (
       source: context.root,
       target: role,
       file: html,
-      operation: "discover-html-renderer",
+      operation:
+        pageKind === "web-page"
+          ? "discover-html-page"
+          : "discover-html-renderer",
     });
     linkElectronRoleToAsset(context, {
       role,

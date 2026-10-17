@@ -38,6 +38,13 @@ const APPLICATION_NODE_POLICIES: Readonly<
     "negative",
     "malformed",
   ]),
+  // The WebView host side of these channels is native code outside the JS
+  // artifact, so the obligation is a renderer/native protocol boundary.
+  "native-bridge-channel": policy("protocol", "native-bridge", "renderer", [
+    "positive",
+    "negative",
+    "malformed",
+  ]),
   endpoint: policy("protocol", "endpoint", "protocol", [
     "positive",
     "negative",

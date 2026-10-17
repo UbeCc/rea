@@ -95,7 +95,8 @@ const kindMatches = (
       (node.kind === "javascript-expression" &&
         node.observations.some((o) => o.properties.step_kind === "exposure"))
     );
-  if (kind === "channel") return node.kind === "ipc-channel";
+  if (kind === "channel")
+    return node.kind === "ipc-channel" || node.kind === "native-bridge-channel";
   if (kind === "module")
     return ["javascript-asset", "javascript-module", "source-module"].includes(
       node.kind,

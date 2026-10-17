@@ -51,6 +51,13 @@ const staticValue = z.discriminatedUnion("status", [
     expression: z.string(),
   }),
 ]);
+const nativeBridgeCall = {
+  ...findingContext,
+  module_runtime: z.string().exactOptional(),
+  bridge: z.enum(["webkit-message-handler", "webview-javascript-bridge"]),
+  operation: z.enum(["post-message", "call-handler", "register-handler"]),
+  mechanism: z.string(),
+};
 const nullHandler = { handler_kind: z.null(), handler_location: z.null() };
 const missingHandler = {
   handler_kind: z.literal("missing"),
@@ -389,6 +396,20 @@ export const javaScriptWorkerStaticAnalysisSchema = z
     ),
     vendors: strings,
     electron,
+    native_bridges: z.array(
+      z.union([
+        z.strictObject({
+          ...nativeBridgeCall,
+          channel: z.string(),
+          channel_expression: z.null(),
+        }),
+        z.strictObject({
+          ...nativeBridgeCall,
+          channel: z.null(),
+          channel_expression: z.string(),
+        }),
+      ]),
+    ),
     limitations: strings,
   })
   .transform((analysis) => ({

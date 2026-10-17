@@ -694,6 +694,7 @@ const findingCount = (analysis: JavaScriptStaticAnalysis): number =>
   analysis.storage.length +
   analysis.role_paths.length +
   analysis.source_map_urls.length +
+  analysis.native_bridges.length +
   analysis.bundler_registrations.length +
   analysis.electron.browser_windows.length +
   analysis.electron.context_bridge_apis.length +

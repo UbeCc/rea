@@ -1,4 +1,6 @@
 import * as t from "@babel/types";
+
+import { inspectNativeBridgeCall } from "./javascriptNativeBridgeCalls.js";
 import { traverseJavaScriptAst } from "./javascriptSemanticTraversal.js";
 
 import { htmlUrlText, stripQueryAndFragment } from "../artifactPathSyntax.js";
@@ -125,6 +127,7 @@ export const inspectCall = (
     });
   inspectEndpointCall(node, name, first, context, bindings);
   inspectStorageCall(node, name, first, context);
+  if (!t.isNewExpression(node)) inspectNativeBridgeCall(node, context);
   if (first === "audio" || first === "video")
     noteMediaElementPreloads(node, accumulator);
   if (

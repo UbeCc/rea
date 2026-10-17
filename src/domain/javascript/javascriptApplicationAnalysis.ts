@@ -32,6 +32,28 @@ export const analyzeJavaScriptApplicationInputSchema = z.strictObject({
   ...javaScriptAnalysisResourceControlsSchema.shape,
 });
 
+/**
+ * WebView-to-native message bridge calls recognized by spelling, such as
+ * WKWebView `webkit.messageHandlers.NAME.postMessage` and
+ * WebViewJavascriptBridge-style `callHandler`/`registerHandler`.
+ */
+const nativeBridgeSummarySchema = z.strictObject({
+  operations: countSchema,
+  literal_channels: countSchema,
+  dynamic_channel_operations: countSchema,
+  webkit_message_handler_posts: countSchema,
+  bridge_handler_calls: countSchema,
+  bridge_handler_registrations: countSchema,
+  channels: z.array(
+    z.strictObject({
+      bridge: z.enum(["webkit-message-handler", "webview-javascript-bridge"]),
+      channel: z.string(),
+      invocations: countSchema,
+      handler_registrations: countSchema,
+    }),
+  ),
+});
+
 /** Compact counts for the high-level Electron architecture/security surface. */
 const electronBoundarySummarySchema = z.strictObject({
   browser_windows: countSchema,
@@ -55,6 +77,9 @@ const electronBoundarySummarySchema = z.strictObject({
   resolved_utility_entrypoints: countSchema,
   native_addon_bindings: countSchema,
   resolved_native_addon_bindings: countSchema,
+  // Old saved evidence predates this field; its absence stays unknown rather
+  // than a measured zero. The producer always writes it.
+  native_bridge: nativeBridgeSummarySchema.exactOptional(),
 });
 
 const reconstructionStatisticsSchema = z.strictObject({

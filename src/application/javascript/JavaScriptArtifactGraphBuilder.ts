@@ -43,6 +43,7 @@ import {
 } from "./JavaScriptArtifactGraphStructure.js";
 import { addJavaScriptBundlerNodes } from "./JavaScriptArtifactGraphBundlers.js";
 import { addElectronBoundaries } from "./ElectronBoundaryGraph.js";
+import { addNativeBridgeBoundaries } from "./NativeBridgeGraph.js";
 import {
   classifyElectronIpcPairings,
   collectElectronIpcRecords,
@@ -140,6 +141,7 @@ function* buildJavaScriptArtifactGraphInputSteps(
   const findingLimitations =
     yield* addJavaScriptStaticFindingsSteps(projectionContext);
   addElectronBoundaries(projectionContext);
+  addNativeBridgeBoundaries(projectionContext);
   yield;
   addJavaScriptHtmlRoles(projectionContext);
   yield;

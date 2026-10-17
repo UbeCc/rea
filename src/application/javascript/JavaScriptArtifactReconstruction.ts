@@ -35,6 +35,7 @@ import {
 } from "./JavaScriptArtifactReconstructionInput.js";
 import { scanCanonicalArtifactInventoryInScope } from "../../artifacts/inventory/scanCanonical.js";
 import { summarizeElectronBoundaries } from "./ElectronBoundaryAnalysis.js";
+import { summarizeNativeBridges } from "./NativeBridgeGraph.js";
 import { createJavaScriptSemanticGraphProjection } from "./JavaScriptSemanticGraphBuilder.js";
 import type { ProgressReporter } from "../ProgressReporter.js";
 import {
@@ -262,14 +263,17 @@ export const reconstructJavaScriptArtifact = async (
           : { source_selection: files.source_selection }),
         graph,
         semantic_graph: semanticGraph,
-        electron_summary: summarizeElectronBoundaries(
-          analysis,
-          new Set(
-            snapshot.occurrences
-              .filter(({ entry_kind }) => entry_kind === "directory")
-              .map(({ logical_path }) => logical_path),
+        electron_summary: {
+          ...summarizeElectronBoundaries(
+            analysis,
+            new Set(
+              snapshot.occurrences
+                .filter(({ entry_kind }) => entry_kind === "directory")
+                .map(({ logical_path }) => logical_path),
+            ),
           ),
-        ),
+          native_bridge: summarizeNativeBridges(analysis),
+        },
         statistics: {
           relevant_files:
             files.files.length + files.unavailable_relevant_files.length,

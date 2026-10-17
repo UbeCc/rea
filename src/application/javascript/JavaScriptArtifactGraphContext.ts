@@ -88,9 +88,13 @@ export interface InferenceEdgeInput extends AstEdgeInput {
     | "persists_to";
 }
 
-/** Electron role identity and static discovery evidence. */
+/** Electron role or HTML page identity and static discovery evidence. */
 export interface RoleNodeInput {
-  readonly kind: "electron-main" | "electron-preload" | "electron-renderer";
+  readonly kind:
+    | "electron-main"
+    | "electron-preload"
+    | "electron-renderer"
+    | "web-page";
   readonly anchor: JavaScriptArtifactFile;
   readonly resolution: ArtifactPathResolution;
   readonly mechanism: string;
@@ -298,6 +302,10 @@ export const artifactFileNodeKind = (
         ? "native-addon"
         : "artifact";
 
+/** Limitation retained on HTML pages that lack static Electron evidence. */
+export const WEB_PAGE_HOST_LIMITATION =
+  "No static Electron evidence was found; the host that loads this page (browser, embedded WebView, or another runtime) is unknown.";
+
 /** Create or merge an Electron role inferred from static syntax or metadata. */
 export const createElectronRoleNode = (
   context: JavaScriptArtifactGraphContext,
@@ -307,7 +315,7 @@ export const createElectronRoleNode = (
     kind: input.kind,
     identity: artifactLocalIdentity(
       input.anchor.sha256,
-      "electron-role",
+      input.kind === "web-page" ? "html-page" : "electron-role",
       `${input.kind}:${input.resolution.resolution_context}:${input.resolution.resolved_path ?? input.resolution.declared_path}`,
     ),
     observations: [
@@ -325,9 +333,15 @@ export const createElectronRoleNode = (
         evidence: staticInferenceEvidence({
           sha256: input.anchor.sha256,
           path: input.anchor.path,
-          operation: "discover-electron-entrypoint",
+          operation:
+            input.kind === "web-page"
+              ? "discover-html-entrypoint"
+              : "discover-electron-entrypoint",
           coverage: input.coverage ?? completeApplicationCoverage(),
-          limitations: input.resolution.limitations,
+          limitations:
+            input.kind === "web-page"
+              ? [...input.resolution.limitations, WEB_PAGE_HOST_LIMITATION]
+              : input.resolution.limitations,
           ...(input.range === undefined ? {} : { range: input.range }),
         }),
       },

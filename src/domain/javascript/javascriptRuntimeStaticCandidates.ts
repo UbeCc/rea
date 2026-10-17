@@ -144,7 +144,9 @@ const candidatesForLayer = (
 const candidateCategory = (
   node: ApplicationNode,
 ): StaticRuntimeCandidate["category"] | null => {
-  if (node.kind === "electron-renderer") return "renderer";
+  // Host-neutral HTML pages remain page-target candidates for browser runtimes.
+  if (node.kind === "electron-renderer" || node.kind === "web-page")
+    return "renderer";
   if (
     node.kind === "javascript-asset" ||
     (node.kind === "javascript-module" && !isStaticSourceModule(node))
