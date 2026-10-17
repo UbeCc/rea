@@ -822,7 +822,6 @@ export const createGhidraProviderClient = (input: {
     prerequisites.value.providerVersion,
   );
   const sessionLimitations = (): readonly string[] => [
-    ...sliceLimitations,
     ...ghidraAnalysisCacheLimitations(client.analysisCacheObservation?.()),
     ...providerLimitations,
     ...targetLimitations,
@@ -855,6 +854,7 @@ export const createGhidraProviderClient = (input: {
       analysisProfile: committedProfile,
       ...(relationshipCoverage === undefined ? {} : { relationshipCoverage }),
       limitations: [
+        ...sliceLimitations,
         ...limitationsFor(operation),
         ...observationLimitations,
         ...sessionLimitations(),
@@ -910,7 +910,11 @@ export const createGhidraProviderClient = (input: {
         return ok(
           createAnalysisExecution(started.value, committedProfile.provider, {
             analysisProfile: committedProfile,
-            limitations: [...healthLimitations, ...sessionLimitations()],
+            limitations: [
+              ...sliceLimitations,
+              ...healthLimitations,
+              ...sessionLimitations(),
+            ],
           }),
         );
       }

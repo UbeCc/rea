@@ -391,7 +391,13 @@ export class JavaScriptAnalysisWorker {
           });
           break;
         }
-        const retainGraph = moduleEstimate + graphEstimate <= remaining;
+        const admittedGraph = moduleEstimate + graphEstimate <= remaining;
+        // The deterministic budget decides admission; live heap headroom is
+        // a safety check that binds only under real memory pressure.
+        const liveHeadroom = this.#ledger.liveHeapHeadroom();
+        const liveHeapLimited =
+          admittedGraph && moduleEstimate + graphEstimate > liveHeadroom;
+        const retainGraph = admittedGraph && !liveHeapLimited;
         this.#phase = "result-admission";
         const decoded = await readJavaScriptAnalysisTransfer(
           join(root.path, `${id}.records`),
@@ -412,11 +418,16 @@ export class JavaScriptAnalysisWorker {
               error: new AnalysisResourceConstraintError(
                 OPERATION,
                 "memory",
-                `Semantic graph for ${file.path} exceeds the parent's remaining result budget; static and module facts were retained`,
+                liveHeapLimited
+                  ? `Semantic graph for ${file.path} exceeds the parent's live heap headroom; static and module facts were retained. This safety limit depends on current memory use and can vary between runs`
+                  : `Semantic graph for ${file.path} exceeds the parent's remaining result budget; static and module facts were retained`,
                 {
                   ...this.#limits(),
                   parent_result_budget_bytes: this.#ledger.resultBudgetBytes,
                   parent_available_result_budget_bytes: remaining,
+                  parent_result_admission_basis: liveHeapLimited
+                    ? "live-heap-headroom"
+                    : "deterministic-result-budget",
                   module_retention_estimate_bytes: moduleEstimate,
                   graph_retention_estimate_bytes: graphEstimate,
                   graph_transfer_bytes: descriptor.graph_bytes,

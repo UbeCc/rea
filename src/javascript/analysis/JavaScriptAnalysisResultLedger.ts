@@ -1,6 +1,21 @@
 import { getHeapStatistics } from "node:v8";
 import { JAVASCRIPT_ANALYSIS_TRANSFER_RECORD_BYTES } from "./JavaScriptAnalysisTransfer.js";
 
+/** Fixed allowance for the parent's own code, schemas and Evidence work. */
+export const JAVASCRIPT_PARENT_BASELINE_RESERVE_BYTES = 128 * 1024 * 1024;
+
+/** Deterministic parent result budget for a configured heap limit. */
+export const javaScriptParentResultBudgetBytes = (heapSizeLimit: number) =>
+  Math.max(
+    0,
+    Math.floor(
+      (heapSizeLimit -
+        JAVASCRIPT_PARENT_BASELINE_RESERVE_BYTES -
+        24 * JAVASCRIPT_ANALYSIS_TRANSFER_RECORD_BYTES) /
+        2,
+    ),
+  );
+
 /**
  * Parent-owned result admission shared by every concurrently owned source
  * worker. One parent heap retains all transferred facts, so the budget, the
@@ -23,14 +38,11 @@ export class JavaScriptAnalysisResultLedger {
         "JavaScript worker source count must be a nonnegative safe integer",
       );
     this.#sourcesRemaining = sourceCount;
-    this.resultBudgetBytes = Math.max(
-      0,
-      Math.floor(
-        (getHeapStatistics().heap_size_limit -
-          process.memoryUsage().heapUsed -
-          24 * JAVASCRIPT_ANALYSIS_TRANSFER_RECORD_BYTES) /
-          2,
-      ),
+    // Derived from the configured heap limit and a fixed host reserve, not
+    // the live heap, so the same input admits the same results on every run
+    // and at every worker count.
+    this.resultBudgetBytes = javaScriptParentResultBudgetBytes(
+      getHeapStatistics().heap_size_limit,
     );
   }
 
@@ -60,16 +72,22 @@ export class JavaScriptAnalysisResultLedger {
     this.#estimatedRetainedBytes += bytes;
   }
 
-  /** Remaining parent capacity, bounded by the retained estimate and the live heap. */
+  /** Remaining deterministic parent capacity: the budget less retained estimates. */
   remainingTotal(): number {
+    return Math.max(0, this.resultBudgetBytes - this.#estimatedRetainedBytes);
+  }
+
+  /**
+   * Live heap headroom, a safety check applied after deterministic admission.
+   * It binds only under real memory pressure, which callers report
+   * separately because it can vary between runs.
+   */
+  liveHeapHeadroom(): number {
     return Math.max(
       0,
-      Math.min(
-        this.resultBudgetBytes - this.#estimatedRetainedBytes,
-        getHeapStatistics().heap_size_limit -
-          process.memoryUsage().heapUsed -
-          24 * JAVASCRIPT_ANALYSIS_TRANSFER_RECORD_BYTES,
-      ),
+      getHeapStatistics().heap_size_limit -
+        process.memoryUsage().heapUsed -
+        24 * JAVASCRIPT_ANALYSIS_TRANSFER_RECORD_BYTES,
     );
   }
 
