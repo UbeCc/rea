@@ -38,6 +38,7 @@ export const registerCoreBinaryCommands = (
 ): void => {
   registerOverviewCommands(cli, logger, runDirectAnalysis);
   registerDecompileCommand(cli, logger, runDirectAnalysis);
+  registerBatchDecompileCommand(cli, logger, runDirectAnalysis);
   registerFunctionCommand(cli, logger, runDirectAnalysis);
   registerInstructionsCommand(cli, logger, runDirectAnalysis);
   registerSearchCommand(cli, logger, runDirectAnalysis);
@@ -224,6 +225,64 @@ const registerDecompileCommand = (
           directAnalysisOptionsFromCli(logger, options),
         ),
       ),
+  });
+};
+
+/**
+ * Decompile several procedures through one provider session. The target is
+ * opened and analyzed once; each item keeps its own resolution or decompiler
+ * failure, as in MCP `batch_decompile`.
+ */
+const registerBatchDecompileCommand = (
+  cli: CliInstance,
+  logger: Logger,
+  runDirectAnalysis: DirectAnalysis["runDirectAnalysis"],
+): void => {
+  cli.command(CLI_COMMANDS.batchDecompile, {
+    description: "Read several parts of an app as code in one session",
+    args: z.object({
+      path: z.string().describe("App or program path"),
+      procedures: z
+        .array(z.string().min(1))
+        .optional()
+        .describe("Procedure names or addresses"),
+    }),
+    options: z.object({
+      procedure: z
+        .array(z.string().min(1))
+        .optional()
+        .describe(
+          "Repeatable procedure name or address; use --procedure=<value> for leading dashes",
+        ),
+      snapshot: z
+        .string()
+        .min(1)
+        .optional()
+        .describe("Load and update a local analysis snapshot"),
+      ...nativeOpenOptionFields,
+    }),
+    run: ({ args, options }) =>
+      logCliCommand(logger, "batch-decompile", () => {
+        const addresses = [
+          ...(args.procedures ?? []),
+          ...(options.procedure ?? []),
+        ];
+        if (addresses.length === 0)
+          throw new AnalysisInputError("batch_decompile", undefined, [
+            {
+              path: ["addresses"],
+              reason: "missing_argument",
+              message:
+                "Name at least one procedure as an argument or with --procedure.",
+            },
+          ]);
+        return runDirectAnalysis(
+          args.path,
+          "batch_decompile",
+          { addresses },
+          directAnalysisOptionsFromCli(logger, options),
+        );
+      }),
   });
 };
 

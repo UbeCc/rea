@@ -68,6 +68,7 @@ type DirectAnalysisTool =
   | "address_to_file_offset"
   | "binary_overview"
   | "procedure_pseudo_code"
+  | "batch_decompile"
   | "read_function_instructions"
   | "inspect_native_instruction"
   | "inspect_native_data_type"
@@ -434,6 +435,7 @@ const executeAnalysisTool = async (input: {
   }
   if (
     tool === "binary_overview" ||
+    tool === "batch_decompile" ||
     tool === "inspect_native_api" ||
     tool === "inspect_native_dispatch_metadata" ||
     tool === "trace_feature" ||
@@ -629,6 +631,7 @@ const isWorkflowEvidenceTool = (
     | DirectAnalysisTool,
 ): boolean =>
   tool === "binary_overview" ||
+  tool === "batch_decompile" ||
   tool === "inspect_native_api" ||
   tool === "inspect_native_dispatch_metadata" ||
   tool === "trace_feature" ||
