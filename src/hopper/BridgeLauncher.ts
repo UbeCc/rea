@@ -30,6 +30,7 @@ import type { MachOThinSlice } from "../artifacts/apple/MachOThinSlice.js";
 import {
   acquireLinuxHopperApplicationLease,
   acquireMacHopperApplicationLease,
+  isUnresponsiveLeaseOwner,
 } from "../process/HopperLease.js";
 import type {
   HopperTargetLease,
@@ -609,9 +610,16 @@ const waitForApplicationSlot = async (input: {
       const mayTry =
         ticket === undefined || remaining <= 0 || (await ticket.isHead());
       if (mayTry) {
-        const acquisition = await input.acquire({ runId: input.runId });
-        if (acquisition.acquired) return ok(acquisition.lease);
-        if (remaining <= 0) {
+        let acquisition: HopperTargetLeaseAcquisition | undefined;
+        try {
+          acquisition = await input.acquire({ runId: input.runId });
+        } catch (cause: unknown) {
+          // A live owner that answers slowly still holds its slot; keep
+          // queueing, and report its failure only at the deadline.
+          if (remaining <= 0 || !isUnresponsiveLeaseOwner(cause)) throw cause;
+        }
+        if (acquisition?.acquired === true) return ok(acquisition.lease);
+        if (acquisition !== undefined && remaining <= 0) {
           const waitersAhead = await ticket
             ?.waitersAhead()
             .catch(() => undefined);

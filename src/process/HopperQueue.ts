@@ -7,6 +7,7 @@ import {
   ensureLeaseDirectory,
   HOPPER_TARGET_LEASE_DIRECTORY,
   probeLeaseOwner,
+  sendOwner,
 } from "./HopperLease.js";
 
 /** One waiter's place in the cross-process Linux Hopper slot queue. */
@@ -49,9 +50,7 @@ export const enterLinuxHopperQueue = async (input: {
   const name = `${String(Date.now()).padStart(15, "0")}-${randomBytes(4).toString("hex")}.sock`;
   const socketPath = join(queue, name);
   const owner = { runId: input.runId, processId: process.pid };
-  const server = createServer((socket) =>
-    socket.end(`${JSON.stringify(owner)}\n`),
-  );
+  const server = createServer((socket) => sendOwner(socket, owner));
   server.unref();
   await listen(server, socketPath);
   await chmod(socketPath, 0o600).catch(async (cause: unknown) => {

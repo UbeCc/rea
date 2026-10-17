@@ -1,4 +1,9 @@
-import { describe, expect, it } from "vitest";
+import { mkdtemp, rm } from "node:fs/promises";
+import { createServer } from "node:net";
+import { join } from "node:path";
+import { describe, expect, it, onTestFinished } from "vitest";
+
+import { probeLeaseOwner } from "../../../../src/process/HopperLease.js";
 
 import {
   HopperApplicationLauncher,
@@ -254,6 +259,63 @@ describe("Linux Hopper fair queue deadline", () => {
     // Waiters behind the head never poll; only the deadline attempt names an
     // owner, and the startup budget resumes after the ticket is left.
     expect(events).toEqual(["pause", "acquire", "leave", "resume"]);
+  });
+});
+
+describe("Linux Hopper slow slot owners", () => {
+  it("keeps queueing when a live owner answers a probe slowly", async () => {
+    const directory = await mkdtemp(join("/tmp", "rea-slow-owner-"));
+    // A live owner that accepts but never answers within the probe deadline.
+    const silent = createServer(() => undefined);
+    await new Promise<void>((resolve) =>
+      silent.listen(join(directory, "owner.sock"), resolve),
+    );
+    onTestFinished(async () => {
+      await new Promise((resolve) => silent.close(resolve));
+      await rm(directory, { recursive: true, force: true });
+    });
+    let attempts = 0;
+    let releases = 0;
+    const result = await new HopperApplicationLauncher(
+      {
+        environment: {},
+        launcherPath: "/unused/Hopper",
+        targetPath: "/target",
+        targetKind: "executable",
+        loaderArgs: [],
+        bridgeScriptPath: "/rea/hopper_bridge.py",
+        launchMode: "verified_linux_demo",
+        demoHelperPath: "/rea/hopper-demo-x11.py",
+        maxLinuxInstances: 1,
+        linuxSlotWaitMs: 20_000,
+      },
+      {
+        platform: "linux",
+        acquireApplicationLease: async () => {
+          attempts += 1;
+          if (attempts === 1) {
+            await probeLeaseOwner(join(directory, "owner.sock"));
+            throw new Error("the silent owner must time out");
+          }
+          return {
+            acquired: true,
+            lease: { release: async () => void (releases += 1) },
+          };
+        },
+      },
+    ).launch({
+      directory: "/missing/rea-launch",
+      socketPath: "/missing/rea-launch/bridge.sock",
+      token: "token",
+      runId: "patient-session",
+    });
+    // The slot was reserved after the slow probe; launch then fails at the
+    // missing session directory, not with "could not verify the lease".
+    expect(attempts).toBe(2);
+    expect(releases).toBe(1);
+    expect(result).not.toMatchObject({
+      error: { userMessage: expect.stringContaining("could not verify") },
+    });
   });
 });
 

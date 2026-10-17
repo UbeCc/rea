@@ -300,9 +300,25 @@ const bind = (server: Server, socketPath: string): Promise<boolean> =>
     server.listen(socketPath);
   });
 
-const sendOwner = (socket: Socket, owner: HopperTargetLeaseOwner): void => {
+/**
+ * Answer one ownership probe. A prober that times out hangs up before the
+ * reply is written; that EPIPE/ECONNRESET concerns only the probe and must
+ * not crash the session holding the lease.
+ */
+export const sendOwner = (socket: Socket, owner: unknown): void => {
+  socket.on("error", () => socket.destroy());
   socket.end(`${JSON.stringify(owner)}\n`);
 };
+
+/** Probe failures where the owner exists but did not answer in time. */
+const unresponsiveOwnerErrors = new WeakSet<HopperStartError>();
+
+/** True when a lease probe failed only because its live owner was slow. */
+export const isUnresponsiveLeaseOwner = (error: unknown): boolean =>
+  error instanceof HopperStartError && unresponsiveOwnerErrors.has(error);
+
+/** Owners on a loaded host can take far longer than a local round trip. */
+const LEASE_OWNER_PROBE_TIMEOUT_MS = 2_000;
 
 /** Probe a lease-style socket: its owner, or whether it is missing or stale. */
 export const probeLeaseOwner = (
@@ -317,14 +333,18 @@ export const probeLeaseOwner = (
       settled = true;
       clearTimeout(timer);
       socket.destroy();
-      rejectOwner(
-        new HopperStartError({
-          cause,
-          userMessage: `REA could not verify the existing Hopper lease (${reason}); it was left unchanged. Retry when the owning REA session is responsive.`,
-        }),
-      );
+      const error = new HopperStartError({
+        cause,
+        userMessage: `REA could not verify the existing Hopper lease (${reason}); it was left unchanged. Retry when the owning REA session is responsive.`,
+      });
+      if (reason === "owner response timed out")
+        unresponsiveOwnerErrors.add(error);
+      rejectOwner(error);
     };
-    const timer = setTimeout(() => fail("owner response timed out"), 250);
+    const timer = setTimeout(
+      () => fail("owner response timed out"),
+      LEASE_OWNER_PROBE_TIMEOUT_MS,
+    );
     const finish = (
       owner: HopperTargetLeaseOwner | "missing" | "stale",
     ): void => {
