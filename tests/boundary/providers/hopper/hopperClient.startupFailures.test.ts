@@ -73,8 +73,13 @@ class ExitingLauncher implements BridgeLauncher {
 }
 
 class DiagnosticExitingLauncher implements BridgeLauncher {
+  constructor(
+    readonly override: Partial<HopperStartupDiagnostic> = {},
+    readonly exitCode = 80,
+  ) {}
+
   launch() {
-    const diagnostic: HopperStartupDiagnostic = {
+    const diagnostic = {
       component: "hopper_private_display",
       operation: "launch",
       status: "error",
@@ -89,7 +94,9 @@ class DiagnosticExitingLauncher implements BridgeLauncher {
       strategy: "direct",
       fallback_reason: null,
       xvfb_stderr_bytes: 100,
-    };
+      python_library: null,
+      ...this.override,
+    } as HopperStartupDiagnostic;
     const line = `${LINUX_PRIVATE_DISPLAY_DIAGNOSTIC_PREFIX}${JSON.stringify(diagnostic)}\n`;
     return Promise.resolve(
       ok({
@@ -97,7 +104,7 @@ class DiagnosticExitingLauncher implements BridgeLauncher {
           process.execPath,
           [
             "-e",
-            `process.stderr.write(${JSON.stringify(line)}, () => process.exit(80))`,
+            `process.stderr.write(${JSON.stringify(line)}, () => process.exit(${String(this.exitCode)}))`,
           ],
           { stdio: ["ignore", "ignore", "pipe"] },
         ),
@@ -383,6 +390,36 @@ describe("HopperClient startup failures", () => {
           wsl: true,
           strategy: "direct",
         },
+      },
+    });
+  });
+});
+
+describe("HopperClient Python library startup failure", () => {
+  it("reports a missing Hopper Python library promptly instead of a startup timeout", async () => {
+    const library = "/usr/lib/x86_64-linux-gnu/libpython3.12.so.1.0";
+    const client = new HopperClient({
+      launcher: new DiagnosticExitingLauncher(
+        {
+          failure_code: "python_library_unavailable",
+          reason: "python_library_missing",
+          python_library: library,
+        },
+        82,
+      ),
+      startupTimeoutMs: 10_000,
+    });
+    clients.push(client);
+    const started = Date.now();
+    const result = await client.start();
+    expect(Date.now() - started).toBeLessThan(5_000);
+    expect(result).toMatchObject({
+      ok: false,
+      error: {
+        _tag: "HopperProcessError",
+        exitCode: 82,
+        failureCode: "python_library_unavailable",
+        diagnostic: { python_library: library },
       },
     });
   });

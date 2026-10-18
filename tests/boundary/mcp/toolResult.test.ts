@@ -360,6 +360,7 @@ describe("tool result projection", () => {
             strategy: "user-mount-namespace",
             fallback_reason: null,
             xvfb_stderr_bytes: 512,
+            python_library: null,
           },
         }),
       ),

@@ -600,12 +600,19 @@ a later launch that finds that lock connects to the socket, forwards its
 arguments, and exits. REA gives every owned demo application a private
 owner-only `TMPDIR` inside its session runtime directory, so each application
 has its own lock and socket and never forwards into, or receives, another
-session's launch. Cooperating REA processes share at most
+session's launch. Applications share `$HOME`: Hopper keeps preferences
+through GNUstep user defaults in `~/.config/hopper`, which serializes
+concurrent processes with its own `.lck` lock directory, and
+`~/.local/share/hopper` holds user plugins. In REA's headless sessions Hopper
+takes that lock but does not rewrite `Hopper.plist`. Cooperating REA processes share at most
 `REA_HOPPER_MAX_INSTANCES` concurrent Linux demo applications per user (default
 4, maximum 64). Each application uses about 200–300 MiB of memory plus the
 target's analysis state; lower the value on small hosts. When every slot is in
-use, a new CLI or MCP session waits briefly for one to be released and then
-reports one current owner session ID before Hopper is launched. Send related
+use, new CLI and MCP sessions queue first-in, first-out across processes for a
+released slot. Queueing does not consume `REA_HOPPER_STARTUP_TIMEOUT_MS`; it is
+bounded by `REA_HOPPER_SLOT_WAIT_MS` (default 600000 ms, 10 minutes), after
+which REA reports one current owner session ID and the number of earlier
+waiters before Hopper is launched. Send related
 queries through one MCP session to reuse its application. Closing the owner
 releases its slot and stops REA's owned demo application and private display;
 the headless Linux demo does not retain documents after MCP shutdown.
@@ -622,6 +629,24 @@ helper watches its private display for that dialog; when it appears, REA stops
 the owned application and reports `demo_session_expired`. Reopen the target
 (`open_binary`, or rerun the command) to start a new demo session; analysis
 state that was not exported is lost.
+
+To avoid that failure in long MCP sessions, REA recycles an idle owned demo
+application once it is older than `REA_HOPPER_DEMO_RECYCLE_MS` (default
+1500000 ms, 25 minutes; `0` disables): the next request closes it and starts a
+fresh application for the same target. REA does not recycle an application
+that is serving a request or that holds metadata edits made in this session
+(names, comments, bookmarks), since a relaunch would discard them; such a
+session can still end with `demo_session_expired`.
+
+Hopper 6.6 runs REA's bridge script through the shared library of the Python
+interpreter it selects (normally `/usr/bin/python3`). When that library is
+missing, Hopper reports `Cannot launch script` and the bridge never starts.
+`rea doctor --provider hopper` loads the same library and reports
+`python_library_unavailable` with its path; on Debian and Ubuntu,
+`rea setup --install-hopper` adds the matching `libpython3.X` package (for
+example `libpython3.12t64` on Ubuntu 24.04) to its planned `apt-get` command,
+and session startup fails immediately with the same code instead of waiting for
+the startup timeout.
 
 Stale lease recovery is serialized. If an interrupted recovery leaves its
 reservation directory, the diagnostic identifies that exact path. Stop REA

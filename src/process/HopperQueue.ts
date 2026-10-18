@@ -7,12 +7,15 @@ import {
   ensureLeaseDirectory,
   HOPPER_TARGET_LEASE_DIRECTORY,
   probeLeaseOwner,
+  sendOwner,
 } from "./HopperLease.js";
 
 /** One waiter's place in the cross-process Linux Hopper slot queue. */
 export interface HopperQueueTicket {
   /** True when no live ticket entered the queue before this one. */
   readonly isHead: () => Promise<boolean>;
+  /** Live (or unresponsive) tickets that entered the queue before this one. */
+  readonly waitersAhead: () => Promise<number>;
   /** Leave the queue; idempotent. */
   readonly leave: () => Promise<void>;
 }
@@ -47,9 +50,7 @@ export const enterLinuxHopperQueue = async (input: {
   const name = `${String(Date.now()).padStart(15, "0")}-${randomBytes(4).toString("hex")}.sock`;
   const socketPath = join(queue, name);
   const owner = { runId: input.runId, processId: process.pid };
-  const server = createServer((socket) =>
-    socket.end(`${JSON.stringify(owner)}\n`),
-  );
+  const server = createServer((socket) => sendOwner(socket, owner));
   server.unref();
   await listen(server, socketPath);
   await chmod(socketPath, 0o600).catch(async (cause: unknown) => {
@@ -58,26 +59,31 @@ export const enterLinuxHopperQueue = async (input: {
   });
   const refusedOnce = new Set<string>();
   let left = false;
-  return {
-    isHead: async () => {
-      const older = (await readdir(queue))
-        .filter((entry) => TICKET.test(entry) && entry < name)
-        .sort();
-      for (const entry of older) {
-        const state = await probeLeaseOwner(join(queue, entry)).catch(
-          // An unresponsive ticket is not proof of exit; keep waiting.
-          () => "unresponsive" as const,
-        );
-        if (state === "missing") continue;
-        if (state !== "stale") return false;
-        if (!refusedOnce.has(entry)) {
-          refusedOnce.add(entry);
-          return false;
-        }
+  /** Count older tickets that may still be waiting; stop at the first when asked. */
+  const scanOlder = async (stopAtFirst: boolean): Promise<number> => {
+    const older = (await readdir(queue))
+      .filter((entry) => TICKET.test(entry) && entry < name)
+      .sort();
+    let ahead = 0;
+    for (const entry of older) {
+      const state = await probeLeaseOwner(join(queue, entry)).catch(
+        // An unresponsive ticket is not proof of exit; keep waiting.
+        () => "unresponsive" as const,
+      );
+      if (state === "missing") continue;
+      if (state === "stale" && refusedOnce.has(entry)) {
         await rm(join(queue, entry), { force: true });
+        continue;
       }
-      return true;
-    },
+      if (state === "stale") refusedOnce.add(entry);
+      ahead += 1;
+      if (stopAtFirst) return ahead;
+    }
+    return ahead;
+  };
+  return {
+    isHead: async () => (await scanOlder(true)) === 0,
+    waitersAhead: () => scanOlder(false),
     leave: async () => {
       if (left) return;
       // Node removes the bound socket file on close.

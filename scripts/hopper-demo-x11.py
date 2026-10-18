@@ -36,6 +36,25 @@ X11_INPUT_FAILED = 78
 RUNTIME_DEPENDENCY_UNAVAILABLE = 79
 X11_SOCKET_DIRECTORY_UNUSABLE = 80
 DEMO_SESSION_EXPIRED = 81
+PYTHON_LIBRARY_UNAVAILABLE = 82
+# Hopper's PythonFinder runs the first of these interpreters with this exact
+# query and loads LIBDIR/INSTSONAME into the application; without that shared
+# library its console reports "Cannot launch script" and REA's bridge never
+# starts. The preflight repeats the same selection and load.
+PYTHON_FINDER_INTERPRETERS = (
+    "/opt/bin/python3",
+    "/opt/homebrew/bin/python3",
+    "/usr/bin/python3",
+)
+PYTHON_FINDER_QUERY = (
+    "import sysconfig;print(sysconfig.get_config_vars('LIBDIR')[0]);"
+    "print(sysconfig.get_config_vars('INSTSONAME')[0])"
+)
+PYTHON_LIBRARY_LOAD = (
+    "import ctypes,sys\n"
+    "try:\n ctypes.CDLL(sys.argv[1])\n"
+    "except OSError:\n raise SystemExit(3)\n"
+)
 # The vendor demo ends each application session after about 30 minutes with a
 # modal "Error" dialog transient for the main window (observed at 1755-1815 s).
 # Earlier "Error" dialogs belong to analysis and are left to Hopper.
@@ -56,6 +75,7 @@ class AdapterFailure(Exception):
         self.code = code
         self.reason = reason
         self.stderr_bytes = stderr_bytes
+        self.python_library: str | None = None
 
     def with_stderr(self, capture: CapturedStderr) -> AdapterFailure:
         self.stderr_bytes, _ = capture.snapshot()
@@ -134,6 +154,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--xvfb", default="/usr/bin/Xvfb")
     parser.add_argument("--xauth", default="/usr/bin/xauth")
     parser.add_argument("--display-number", type=int)
+    parser.add_argument(
+        "--python-interpreter",
+        action="append",
+        dest="python_interpreters",
+        help="override Hopper's PythonFinder candidates (tests)",
+    )
     parser.add_argument("command", nargs=argparse.REMAINDER)
     return parser.parse_args()
 
@@ -377,6 +403,70 @@ def configure_x11(x11: ctypes.CDLL, xtst: ctypes.CDLL) -> None:
     xtst.XTestFakeButtonEvent.restype = ctypes.c_int
 
 
+def check_python_library(args: argparse.Namespace) -> str:
+    """Load the shared library Hopper's PythonFinder would select, in a child."""
+    candidates = args.python_interpreters or PYTHON_FINDER_INTERPRETERS
+    interpreter = next(
+        (path for path in candidates if os.path.isfile(path) and os.access(path, os.X_OK)),
+        None,
+    )
+    if interpreter is None:
+        raise AdapterFailure(
+            PYTHON_LIBRARY_UNAVAILABLE,
+            "python_interpreter_missing",
+            "no Python interpreter for Hopper scripts",
+        )
+    try:
+        query = subprocess.run(
+            [interpreter, "-uc", PYTHON_FINDER_QUERY],
+            check=False,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            timeout=10,
+        )
+    except (OSError, subprocess.TimeoutExpired) as error:
+        raise AdapterFailure(
+            PYTHON_LIBRARY_UNAVAILABLE,
+            "python_query_failed",
+            "Python library query failed",
+        ) from error
+    lines = query.stdout.decode("utf-8", "replace").splitlines()
+    if query.returncode != 0 or len(lines) < 2 or lines[0] in ("", "None"):
+        raise AdapterFailure(
+            PYTHON_LIBRARY_UNAVAILABLE,
+            "python_query_failed",
+            "Python library query failed",
+        )
+    if lines[1] in ("", "None"):
+        raise AdapterFailure(
+            PYTHON_LIBRARY_UNAVAILABLE,
+            "python_library_not_shared",
+            "Python interpreter has no shared library",
+        )
+    library = os.path.join(lines[0], lines[1])
+    try:
+        loaded = subprocess.run(
+            [interpreter, "-c", PYTHON_LIBRARY_LOAD, library],
+            check=False,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=10,
+        ).returncode
+    except (OSError, subprocess.TimeoutExpired):
+        loaded = None
+    if loaded != 0:
+        failure = AdapterFailure(
+            PYTHON_LIBRARY_UNAVAILABLE,
+            "python_library_missing" if not os.path.exists(library) else "python_library_unloadable",
+            "Python shared library unavailable",
+        )
+        failure.python_library = library
+        raise failure
+    return library
+
+
 def is_wsl() -> bool:
     for path in (Path("/proc/sys/kernel/osrelease"), Path("/proc/version")):
         try:
@@ -431,6 +521,9 @@ def diagnostic(
         "xvfb_stderr_bytes": captured_bytes
         if failure is None
         else failure.stderr_bytes,
+        "python_library": getattr(args, "python_library", None)
+        if failure is None or failure.python_library is None
+        else failure.python_library,
     }
 
 
@@ -448,6 +541,7 @@ def failure_name(code: int) -> str:
         RUNTIME_DEPENDENCY_UNAVAILABLE: "runtime_dependency_unavailable",
         X11_SOCKET_DIRECTORY_UNUSABLE: "x11_socket_directory_unusable",
         DEMO_SESSION_EXPIRED: "demo_session_expired",
+        PYTHON_LIBRARY_UNAVAILABLE: "python_library_unavailable",
     }[code]
 
 
@@ -714,6 +808,9 @@ def run_probe(args: argparse.Namespace) -> dict[str, object]:
         try:
             stop_process(xvfb)
             capture.close()
+            # Display dependencies are reported first; then the library
+            # Hopper needs before it can run REA's bridge script.
+            args.python_library = check_python_library(args)
             return diagnostic(args, "probe", "ready", capture=capture)
         finally:
             stop_process(xvfb)
@@ -759,6 +856,9 @@ def run_launch(args: argparse.Namespace) -> int:
             "invalid_launch_command",
             "invalid Hopper launch command",
         )
+    # Without this library Hopper only shows "Cannot launch script" in its
+    # console and the bridge never connects; report it before launching.
+    args.python_library = check_python_library(args)
     xvfb, display_name, authority, capture = start_xvfb(socket.parent, args)
     child: subprocess.Popen[bytes] | None = None
     display: int | None = None

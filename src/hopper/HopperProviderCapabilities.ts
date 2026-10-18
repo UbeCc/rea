@@ -61,6 +61,10 @@ const MUTATING_OPERATIONS = new Set<string>([
   "unset_bookmark",
 ]);
 
+/** True for operations that edit Hopper's in-application analysis metadata. */
+export const isHopperMutatingOperation = (operation: string): boolean =>
+  MUTATING_OPERATIONS.has(operation);
+
 /** Source-owned capabilities without acquiring or probing a Hopper session. */
 export const CAPABILITIES: readonly CapabilityDescriptor[] = Object.freeze(
   [...HOPPER_OPERATIONS, "search_bytes" as const].map((operation) =>

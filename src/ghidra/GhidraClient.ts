@@ -932,7 +932,7 @@ export class GhidraClient {
           // session's budget; caller cancellation still stops the wait.
           waited = true;
           const waitStartedAt = performance.now();
-          const resume = deadline.suspend();
+          const resume = deadline.pause();
           try {
             hit = await cache.waitForBuild(
               identity,

@@ -29,6 +29,10 @@ export interface AppConfig {
   readonly hopperStartupTimeoutMs: number;
   /** Concurrent Linux demo applications shared by cooperating REA processes. */
   readonly hopperMaxInstances: number;
+  /** Longest wait in the fair Linux slot queue, excluded from startup time. */
+  readonly hopperSlotWaitMs: number;
+  /** Idle Linux demo application age that triggers a recycle; 0 disables. */
+  readonly hopperDemoRecycleMs: number;
   readonly hopperTargetPath: string | undefined;
   readonly hopperTargetKind: "executable" | "database";
   readonly hopperLoaderArgs: readonly string[];
