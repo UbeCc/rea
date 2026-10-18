@@ -83,6 +83,10 @@ software, including Node.js, npm, Homebrew, Java, Ghidra, IDA, JADX, Kuna, Binwa
 
 ## Route the target first
 
+Before a long provider run, skim [field notes](references/field-notes.md):
+shortcuts and pitfalls from real investigations (bridged WebView apps,
+provider naming, Hopper/Ghidra/IDA Free setup, efficient result reading).
+
 Choose the first tool from the target the user supplied. Use `open_binary` for
 active-target native or archive workflows; target-free tools take their own
 explicit path or endpoint and do not need it.
