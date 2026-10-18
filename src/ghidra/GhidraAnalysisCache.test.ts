@@ -11,6 +11,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
+import type { ProcessOwnershipHost } from "../process/ProcessOwnership.js";
 import {
   GhidraAnalysisCache,
   GhidraAnalysisCacheUnavailableError,
@@ -40,7 +41,34 @@ const store = async (
   return staging.publish(1234);
 };
 
-const cacheIn = async (maxBytes?: number) => {
+/** A process table holding only this test process with a mutable start identity. */
+const identityHost = (state: { identity: string }): ProcessOwnershipHost => ({
+  platform: "linux",
+  listProcesses: () =>
+    Promise.resolve([
+      {
+        pid: process.pid,
+        parentPid: 1,
+        processGroupId: process.pid,
+        uid: 1000,
+        state: "S",
+        command: "/usr/bin/node",
+      },
+    ]),
+  environment: () => Promise.resolve({}),
+  processIdentities: () =>
+    Promise.resolve(
+      new Map([
+        [process.pid, { state: "readable" as const, identity: state.identity }],
+      ]),
+    ),
+  signalGroup: () => undefined,
+});
+
+const cacheIn = async (
+  maxBytes?: number,
+  processHost?: ProcessOwnershipHost,
+) => {
   const root = await createTestTempDirectory("rea-ghidra-cache-");
   const directory = join(root, "cache");
   return {
@@ -49,6 +77,7 @@ const cacheIn = async (maxBytes?: number) => {
     cache: new GhidraAnalysisCache({
       directory,
       ...(maxBytes === undefined ? {} : { maxBytes }),
+      ...(processHost === undefined ? {} : { processHost }),
     }),
   };
 };
@@ -284,5 +313,35 @@ describe("GhidraAnalysisCache ownership, retention and builders", () => {
     const reason = new Error("caller left");
     controller.abort(reason);
     await expect(waiting).rejects.toBe(reason);
+  });
+
+  it("binds a reservation to the builder's start identity, not its PID alone", async () => {
+    const state = { identity: "start-1" };
+    const { directory, cache } = await cacheIn(undefined, identityHost(state));
+    const lease = await cache.tryReserveBuild(identity(), 60_000);
+    expect(lease).toBeDefined();
+    const owner = JSON.parse(
+      await readFile(
+        join(
+          directory,
+          "v1",
+          "leases",
+          ghidraAnalysisCacheKey(identity()),
+          "owner.json",
+        ),
+        "utf8",
+      ),
+    ) as Record<string, unknown>;
+    expect(owner).toMatchObject({
+      pid: process.pid,
+      start_identity: "start-1",
+    });
+    await expect(cache.buildReserved(identity(), 60_000)).resolves.toBe(true);
+    // The same PID now names a different process: the reservation is stale.
+    state.identity = "start-2";
+    await expect(cache.buildReserved(identity(), 60_000)).resolves.toBe(false);
+    await expect(
+      cache.tryReserveBuild(identity(), 60_000),
+    ).resolves.toBeDefined();
   });
 });

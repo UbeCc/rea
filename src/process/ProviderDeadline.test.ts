@@ -348,3 +348,40 @@ it("classifies caller cancellation during a pause as cancellation", async () => 
     deadline.dispose();
   }
 });
+
+it("excludes a paused interval (Ghidra cache wait) from the budget and re-arms the remainder", async () => {
+  const deadline = new ProviderStartupDeadline(1000);
+  try {
+    await vi.advanceTimersByTimeAsync(400);
+    const resume = deadline.pause();
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(deadline.signal.aborted).toBe(false);
+    expect(deadline.interruption).toBeUndefined();
+    expect(deadline.remainingMs()).toBe(600);
+    resume();
+    resume();
+    await vi.advanceTimersByTimeAsync(599);
+    expect(deadline.signal.aborted).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(deadline.signal.aborted).toBe(true);
+    expect(deadline.interruption).toBe("timeout");
+  } finally {
+    deadline.dispose();
+  }
+});
+
+it("classifies caller cancellation during a paused interval (Ghidra cache wait) as cancelled", async () => {
+  const controller = new AbortController();
+  const deadline = new ProviderStartupDeadline(100, controller.signal);
+  try {
+    const resume = deadline.pause();
+    await vi.advanceTimersByTimeAsync(500);
+    controller.abort(new Error("caller left"));
+    expect(deadline.signal.aborted).toBe(true);
+    expect(deadline.interruption).toBe("cancelled");
+    resume();
+    expect(deadline.interruption).toBe("cancelled");
+  } finally {
+    deadline.dispose();
+  }
+});

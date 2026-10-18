@@ -36,7 +36,7 @@ export const formatSelectionOption = executableFormatHintSchema
 export const architectureSelectionOption = binaryArchitectureSchema
   .optional()
   .describe(
-    "Caller-supplied CPU family; required with --target-format raw-binary",
+    "Caller-supplied CPU family; required with --target-format raw-binary, otherwise selects that universal Mach-O slice instead of the host-compatible one",
   );
 
 export const entryPointSelectionOption = rawBinaryEntryPointSchema

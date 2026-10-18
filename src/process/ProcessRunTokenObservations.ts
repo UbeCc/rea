@@ -40,10 +40,16 @@ export async function* readProcessRunTokens(
           signal === undefined
             ? await host.environment(process.pid)
             : await host.environment(process.pid, signal);
-        observation = {
-          state: "readable",
-          runId: environment.REA_PROCESS_RUN_ID,
-        };
+        // A process that is exiting has released its address space, so
+        // Linux returns an empty environment: that is not a foreign token.
+        // Leave it unreadable so a fresh liveness snapshot can resolve it.
+        observation =
+          Object.keys(environment).length === 0
+            ? {
+                state: "unavailable",
+                reason: EMPTY_ENVIRONMENT_REASON,
+              }
+            : { state: "readable", runId: environment.REA_PROCESS_RUN_ID };
       } catch (cause: unknown) {
         signal?.throwIfAborted();
         const reason = errorMessage(cause);
@@ -60,3 +66,7 @@ export async function* readProcessRunTokens(
     yield { process, observation };
   }
 }
+
+/** Reason for an empty environment read, typical of an exiting process. */
+export const EMPTY_ENVIRONMENT_REASON =
+  "process environment was empty (the process may be exiting)";

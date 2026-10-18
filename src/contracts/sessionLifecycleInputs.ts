@@ -41,7 +41,7 @@ export const openBinaryInputSchema = z
     architecture: binaryArchitectureSchema
       .optional()
       .describe(
-        "Caller-supplied CPU family. Required with format=raw-binary; rejected otherwise.",
+        "Caller-supplied CPU family. Required with format=raw-binary; without format, selects that slice of a universal Mach-O instead of the host-compatible one; rejected otherwise.",
       ),
     entry_point: rawBinaryEntryPointSchema
       .optional()

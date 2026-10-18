@@ -1,12 +1,6 @@
 import { z } from "zod";
 import { isMachOFormat, type BinaryTarget } from "../binaryTargetTypes.js";
 import { providerSchema } from "../evidence.js";
-import { isSwiftMangledSymbolName } from "../swiftSymbolClassification.js";
-
-import {
-  compareUnicodeCodePoints,
-  compositeKey,
-} from "../unicodeCodePointOrder.js";
 
 /** Targets admitted to the Apple byte reader; the reader validates slice support. */
 export const isAppleDispatchMetadataTarget = (target: BinaryTarget): boolean =>
@@ -34,7 +28,7 @@ export const objcMethodSchema = z.strictObject({
   is_required: z.boolean().nullable(),
   is_optional: z.boolean().nullable(),
 });
-type ObjcMethod = z.infer<typeof objcMethodSchema>;
+export type ObjcMethod = z.infer<typeof objcMethodSchema>;
 
 /** Objective-C property metadata. */
 export const objcPropertySchema = z.strictObject({
@@ -95,7 +89,7 @@ export const objcClassSchema = z.strictObject({
     )
     .optional(),
 });
-type ObjcClass = z.infer<typeof objcClassSchema>;
+export type ObjcClass = z.infer<typeof objcClassSchema>;
 
 /** Exact location of a decoded native metadata value when the provider knows it. */
 export const nativeMetadataLocationSchema = z.strictObject({
@@ -173,7 +167,7 @@ export const objcDispatchImplementationSchema = z.strictObject({
   decode: nativeMetadataDecodeSchema,
   evidence: z.array(nativeMetadataEvidenceSchema).min(1),
 });
-type ObjcDispatchImplementation = z.infer<
+export type ObjcDispatchImplementation = z.infer<
   typeof objcDispatchImplementationSchema
 >;
 
@@ -235,7 +229,7 @@ export const swiftSymbolSchema = z.strictObject({
   decode: nativeMetadataDecodeSchema,
   evidence: z.array(nativeMetadataEvidenceSchema).min(1),
 });
-type SwiftSymbol = z.infer<typeof swiftSymbolSchema>;
+export type SwiftSymbol = z.infer<typeof swiftSymbolSchema>;
 
 /** Per-facet coverage; empty arrays are meaningful only with this record. */
 export const nativeMetadataCoverageSchema = z.strictObject({
@@ -334,162 +328,3 @@ export const nativeDispatchMetadataResultSchema = z.strictObject({
   analysis_profile_digest: z.string().min(1).nullable(),
   result: objcSwiftMetadataSchema,
 });
-
-/** Decode only facts visible in a provider's existing name inventory. */
-export const inspectNativeDispatchMetadata = (
-  names: readonly { readonly address: string; readonly name: string }[],
-  maxRecords = 5_000,
-): ObjcSwiftMetadata => {
-  const symbolEvidence = (
-    entry: (typeof names)[number],
-    address: string | null,
-  ) => [
-    {
-      kind: "symbol" as const,
-      description: `Provider symbol ${entry.name}`,
-      location: { address, file_offset: null },
-      ...(address === null ? { reported_address: entry.address } : {}),
-      artifact_path: null,
-      artifact_sha256: null,
-    },
-  ];
-  const classNames = new Set<string>();
-  const implementations = new Map<string, ObjcDispatchImplementation>();
-  const swiftSymbols: SwiftSymbol[] = [];
-
-  const examinedNames = names.slice(0, maxRecords);
-  for (const entry of examinedNames) {
-    const address = entry.address === "" ? null : entry.address;
-    const classMatch = /(?:OBJC_CLASS_|OBJC_METACLASS_)\$_([^\s]+)/u.exec(
-      entry.name,
-    );
-    if (classMatch?.[1] !== undefined) classNames.add(classMatch[1]);
-
-    const methodMatch = /^([+-])\[([^\s\]]+)\s+([^\]]+)\]$/u.exec(entry.name);
-    if (methodMatch?.[1] !== undefined && methodMatch[2] && methodMatch[3]) {
-      const methodType = methodMatch[1] === "+" ? "class" : "instance";
-      const selector = methodMatch[3];
-      implementations.set(`${methodMatch[2]}:${selector}:${methodType}`, {
-        class_name: methodMatch[2],
-        selector,
-        method_type: methodType,
-        implementation_address: address,
-        location: { address, file_offset: null },
-        decode: { status: "partial", reason: "symbol_name_only" },
-        evidence: symbolEvidence(entry, address),
-      });
-      classNames.add(methodMatch[2]);
-    }
-
-    if (isSwiftMangledSymbolName(entry.name) || entry.name.startsWith("_Tt"))
-      swiftSymbols.push({
-        mangled_name: entry.name,
-        address,
-        decode: { status: "partial", reason: "mangled_symbol_not_demangled" },
-        evidence: symbolEvidence(entry, address),
-      });
-  }
-
-  const methodsByClass = new Map<string, ObjcMethod[]>();
-  for (const implementation of implementations.values()) {
-    const methods = methodsByClass.get(implementation.class_name) ?? [];
-    methods.push({
-      selector: implementation.selector,
-      method_type: implementation.method_type,
-      address: parseMetadataAddress(implementation.implementation_address),
-      is_required: null,
-      is_optional: null,
-    });
-    methodsByClass.set(implementation.class_name, methods);
-  }
-  const classes: ObjcClass[] = [...classNames].sort().map((name) => ({
-    name,
-    super_class: null,
-    is_meta_class: null,
-    is_root_class: null,
-    methods: methodsByClass.get(name) ?? [],
-    properties: [],
-    protocols: [],
-    ivar_count: null,
-    instance_size: null,
-  }));
-  const decodedImplementations = [...implementations.values()].sort(
-    (left, right) =>
-      compareUnicodeCodePoints(
-        compositeKey([left.class_name, left.selector]),
-        compositeKey([right.class_name, right.selector]),
-      ),
-  );
-  const swift = swiftSymbols.length > 0;
-
-  return objcSwiftMetadataSchema.parse({
-    objc_classes: classes,
-    objc_dispatch_implementations: decodedImplementations,
-    swift_symbols: swiftSymbols,
-    coverage: [
-      {
-        facet: "objc_class_symbols",
-        status: "partial",
-        reason:
-          names.length > examinedNames.length
-            ? "record_limit_reached_and_symbol_names_are_not_runtime_class_metadata"
-            : "symbol_names_do_not_recover_all_runtime_class_metadata",
-        examined: examinedNames.length,
-        decoded: classes.length,
-      },
-      {
-        facet: "objc_dispatch_implementations",
-        status: decodedImplementations.length > 0 ? "partial" : "unsupported",
-        reason:
-          names.length > examinedNames.length
-            ? "record_limit_reached_and_only_symbolized_methods_are_resolved"
-            : decodedImplementations.length > 0
-              ? "only_symbolized_methods_are_resolved"
-              : "provider_name_inventory_has_no_objc_method_symbols",
-        examined: examinedNames.length,
-        decoded: decodedImplementations.length,
-      },
-      {
-        facet: "objc_ivar_layouts",
-        status: "unsupported",
-        reason: "symbol_inventory_does_not_expose_runtime_ivar_layouts",
-        examined: 0,
-        decoded: 0,
-      },
-      {
-        facet: "swift_declarations",
-        status: swift ? "partial" : "unsupported",
-        reason: swift
-          ? "symbols_are_not_demangled_declarations"
-          : "no_swift_symbols_observed",
-        examined: swiftSymbols.length,
-        decoded: 0,
-      },
-      {
-        facet: "swift_dispatch_tables",
-        status: "unsupported",
-        reason:
-          "provider_name_inventory_does_not_decode_witness_or_class_vtables",
-        examined: 0,
-        decoded: 0,
-      },
-      {
-        facet: "relative_pointers",
-        status: "unsupported",
-        reason:
-          "provider_name_inventory_does_not_decode_binary_relative_pointers",
-        examined: 0,
-        decoded: 0,
-      },
-    ],
-    db_save_result: null,
-  });
-};
-
-const parseMetadataAddress = (address: string | null): number | null => {
-  if (address === null) return null;
-  const match = /(?:^|:)0x([0-9a-f]+)$/iu.exec(address);
-  if (match?.[1] === undefined) return null;
-  const value = Number.parseInt(match[1], 16);
-  return Number.isSafeInteger(value) ? value : null;
-};

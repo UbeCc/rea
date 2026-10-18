@@ -30,6 +30,7 @@ import {
 import {
   admitRawBinary,
   rawBinarySelectionError,
+  UNIVERSAL_SLICE_SELECTION_ONLY,
 } from "../domain/rawBinary.js";
 import type { BinaryArchitecture } from "../domain/binaryTargetTypes.js";
 import { observeMzWindowsHeader } from "../domain/dosMz.js";
@@ -47,6 +48,7 @@ import {
 import {
   parseCodeViewData,
   parseExecutableHeader,
+  type FatSliceSelection,
   parsePeRecord,
   peDebugDirectoryEntry,
   peRvaToFileOffset,
@@ -180,10 +182,19 @@ export const parseBinaryTarget = async (
         targetKind === "database"
           ? undefined
           : await detectArtifactFormat(path, handle, signal);
-      if (
+      const isDatabase =
         targetKind === "database" ||
-        (targetKind === undefined && path.toLowerCase().endsWith(".hop"))
+        (targetKind === undefined && path.toLowerCase().endsWith(".hop"));
+      if (
+        architecture !== undefined &&
+        (isDatabase || artifactFormat !== undefined)
       )
+        return err(
+          new BinaryTargetError(path, UNIVERSAL_SLICE_SELECTION_ONLY, {
+            constraint: "load_selection_rejected",
+          }),
+        );
+      if (isDatabase)
         return ok({
           path,
           sourcePath,
@@ -203,13 +214,34 @@ export const parseBinaryTarget = async (
       }
       const detected = await readExecutableMetadata(
         handle,
-        hostArchitecture,
+        architecture === undefined
+          ? hostArchitecture
+          : { source: "caller", architecture },
         signal,
       );
       if (!detected.ok)
         return err(
           new BinaryTargetError(path, detected.error, {
-            constraint: "file_format_rejected",
+            constraint:
+              architecture !== undefined &&
+              detected.error.startsWith("FAT binary has no ")
+                ? "load_selection_rejected"
+                : "file_format_rejected",
+          }),
+        );
+      // A caller architecture only selects a universal Mach-O slice; a thin
+      // image is accepted when it already is that architecture.
+      if (
+        architecture !== undefined &&
+        detected.value.format !== "mach-o-universal" &&
+        !(
+          detected.value.format === "mach-o" &&
+          detected.value.architecture === architecture
+        )
+      )
+        return err(
+          new BinaryTargetError(path, UNIVERSAL_SLICE_SELECTION_ONLY, {
+            constraint: "load_selection_rejected",
           }),
         );
       return ok({
@@ -461,7 +493,7 @@ const resolveAppBundle = async (
 
 const readExecutableMetadata = async (
   handle: FileHandle,
-  hostArchitecture: NodeJS.Architecture,
+  hostArchitecture: FatSliceSelection,
   signal?: AbortSignal,
 ): Promise<Result<ExecutableMetadata, string>> => {
   throwIfTargetResolutionCancelled(signal);

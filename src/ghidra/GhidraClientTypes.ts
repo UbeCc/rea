@@ -74,6 +74,8 @@ export type GhidraAnalysisCacheObservation =
       readonly created_at: string;
       readonly analysis_ms: number | null;
       readonly waited_for_builder: boolean;
+      /** Wall time excluded from the startup deadline while another builder ran. */
+      readonly builder_wait_ms: number | null;
     }
   | {
       readonly status:
@@ -82,5 +84,7 @@ export type GhidraAnalysisCacheObservation =
         | "not-produced"
         | "over-budget";
       readonly key: string;
+      /** Set when this session first waited for a builder that did not publish. */
+      readonly builder_wait_ms?: number | null;
     }
   | { readonly status: "unavailable"; readonly reason: string };

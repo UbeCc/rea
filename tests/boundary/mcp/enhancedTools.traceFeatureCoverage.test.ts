@@ -87,6 +87,9 @@ const provider = (behavior: Behavior = {}): AnalysisOperationPort => ({
       }
       case "resolve_containing_procedure":
         return ok(createAnalysisExecution(containing(address), PROVIDER));
+      case "list_segments":
+        // No __cfstring region: string references are not followed further.
+        return ok(createAnalysisExecution([], PROVIDER));
       default:
         throw new Error(`Unexpected operation: ${name}`);
     }

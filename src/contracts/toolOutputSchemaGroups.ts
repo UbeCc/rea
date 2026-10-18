@@ -221,6 +221,13 @@ const literalTraceOutput = evidenceResultOf(
         target_address: z.string(),
         source_address: z.string(),
         containing_procedure: containingProcedureResolution,
+        via: z
+          .object({
+            kind: z.literal("cfstring"),
+            object_address: z.string(),
+            string_reference_address: z.string(),
+          })
+          .optional(),
       }),
     ),
     truncated: z.boolean(),

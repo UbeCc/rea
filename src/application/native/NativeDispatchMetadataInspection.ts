@@ -1,9 +1,7 @@
 import { z } from "zod";
 import { addressedValue } from "../../contracts/toolOutputSchemaPrimitives.js";
-import {
-  nativeDispatchMetadataResultSchema,
-  inspectNativeDispatchMetadata,
-} from "../../domain/native/objcSwiftMetadata.js";
+import { nativeDispatchMetadataResultSchema } from "../../domain/native/objcSwiftMetadata.js";
+import { inspectNativeDispatchMetadata } from "../../domain/native/objcSymbolDispatchMetadata.js";
 import { AnalysisOutputError } from "../../domain/analysisErrorCore.js";
 import { jsonValueSchema } from "../../domain/jsonValue.js";
 import { err, ok } from "../../domain/result.js";
@@ -63,6 +61,7 @@ export const inspectNativeDispatch = async (
           names.data.map((entry) => ({
             address: entry.address,
             name: "value" in entry ? entry.value : entry.name,
+            ...(entry.symbol?.external === true ? { external: true } : {}),
           })),
           maxRecords,
         ),

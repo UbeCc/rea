@@ -7,6 +7,7 @@ import { AnalysisOutputError } from "../domain/analysisErrorCore.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import { err, ok, type Result } from "../domain/result.js";
+import { CfStringResolver } from "./EnhancedCfStringHop.js";
 import type {
   EnhancedResult,
   TraceMatch,
@@ -145,54 +146,116 @@ const traceReferences = async (
   const residual: string[] = [];
   // A source address is resolved once however many matches reference it.
   const containing = new Map<string, JsonValue>();
-  for (const match of request.matches) {
-    const observed = await observe(
-      "xrefs",
-      { address: match.address },
+  const cfStrings = new CfStringResolver(call, request.signal);
+  const followedObjects = new Set<string>();
+  const resolveContaining = async (
+    source: string,
+  ): Promise<Result<JsonValue, AnalysisError>> => {
+    const cached = containing.get(source);
+    if (cached !== undefined) return ok(cached);
+    const resolved = await call(
+      "resolve_containing_procedure",
+      { address: source },
       request.signal,
     );
-    if (!observed.ok) return observed;
-    // Only an explicit producer report of truncation is a coverage gap; a
-    // provider that reports nothing keeps its previous, unqualified result.
-    const unknown = `References to ${match.address} were truncated by the provider; additional references may exist.`;
-    if (
-      observed.value.referencesTruncated === true &&
-      !residual.includes(unknown)
-    )
-      residual.push(unknown);
-    const sources = observed.value.result;
-    if (!Array.isArray(sources))
-      return err(
-        new AnalysisOutputError(
-          "xrefs",
-          "provider returned a non-array result",
-        ),
-      );
-    for (const source of sources) {
-      if (typeof source !== "string")
-        return err(
-          new AnalysisOutputError(
-            "xrefs",
-            "provider returned a non-address value",
-          ),
-        );
-      let containingProcedure = containing.get(source);
-      if (containingProcedure === undefined) {
-        const resolved = await call(
-          "resolve_containing_procedure",
-          { address: source },
-          request.signal,
-        );
-        if (!resolved.ok) return resolved;
-        containingProcedure = resolved.value;
-        containing.set(source, containingProcedure);
-      }
+    if (resolved.ok) containing.set(source, resolved.value);
+    return resolved;
+  };
+  for (const match of request.matches) {
+    const sources = await referenceSources(
+      observe,
+      match.address,
+      residual,
+      request.signal,
+    );
+    if (!sources.ok) return sources;
+    for (const source of sources.value) {
+      const containingProcedure = await resolveContaining(source);
+      if (!containingProcedure.ok) return containingProcedure;
       references.push({
         target_address: match.address,
         source_address: source,
-        containing_procedure: containingProcedure,
+        containing_procedure: containingProcedure.value,
       });
+      if (
+        match.type !== "string" ||
+        !outsideProcedure(containingProcedure.value)
+      )
+        continue;
+      // An Objective-C @"..." literal is loaded through a constant CFString
+      // object whose C-string field references the string; continue from the
+      // verified object start to the code that loads it.
+      const object = await cfStrings.objectReferencing(source, match.address);
+      if (!object.ok) return object;
+      if (object.value === undefined) continue;
+      const key = `${match.address}\u0000${object.value.objectAddress}`;
+      if (followedObjects.has(key)) continue;
+      followedObjects.add(key);
+      const loaders = await referenceSources(
+        observe,
+        object.value.objectAddress,
+        residual,
+        request.signal,
+      );
+      if (!loaders.ok) return loaders;
+      for (const loader of loaders.value) {
+        const loaderProcedure = await resolveContaining(loader);
+        if (!loaderProcedure.ok) return loaderProcedure;
+        references.push({
+          target_address: match.address,
+          source_address: loader,
+          containing_procedure: loaderProcedure.value,
+          via: {
+            kind: "cfstring",
+            object_address: object.value.objectAddress,
+            string_reference_address: object.value.stringReferenceAddress,
+          },
+        });
+      }
     }
   }
   return ok({ references, residual });
+};
+
+const outsideProcedure = (resolution: JsonValue): boolean =>
+  typeof resolution === "object" &&
+  resolution !== null &&
+  !Array.isArray(resolution) &&
+  resolution["found"] === false &&
+  resolution["reason"] === "not_in_procedure";
+
+/** Provider xref sources for one address, recording explicit truncation. */
+const referenceSources = async (
+  observe: ObserveCall,
+  address: string,
+  residual: string[],
+  signal?: AbortSignal,
+): Promise<Result<readonly string[], AnalysisError>> => {
+  const observed = await observe("xrefs", { address }, signal);
+  if (!observed.ok) return observed;
+  // Only an explicit producer report of truncation is a coverage gap; a
+  // provider that reports nothing keeps its previous, unqualified result.
+  const unknown = `References to ${address} were truncated by the provider; additional references may exist.`;
+  if (
+    observed.value.referencesTruncated === true &&
+    !residual.includes(unknown)
+  )
+    residual.push(unknown);
+  const sources = observed.value.result;
+  if (!Array.isArray(sources))
+    return err(
+      new AnalysisOutputError("xrefs", "provider returned a non-array result"),
+    );
+  const addresses: string[] = [];
+  for (const source of sources) {
+    if (typeof source !== "string")
+      return err(
+        new AnalysisOutputError(
+          "xrefs",
+          "provider returned a non-address value",
+        ),
+      );
+    addresses.push(source);
+  }
+  return ok(addresses);
 };

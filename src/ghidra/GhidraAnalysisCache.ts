@@ -16,6 +16,13 @@ import { join } from "node:path";
 
 import { z } from "zod";
 
+import type { ProcessOwnershipHost } from "../process/ProcessOwnership.js";
+import {
+  observeProcessStartIdentity,
+  observeProcessStartIdentityExit,
+  systemProcessOwnershipHost,
+} from "../process/ProcessOwnershipObservation.js";
+
 /**
  * Persistent cache of analyzed Ghidra Programs.
  *
@@ -284,16 +291,37 @@ export class GhidraAnalysisCache {
   readonly directory: string;
   readonly maxBytes: number;
   readonly #now: () => Date;
+  readonly #processHost: ProcessOwnershipHost;
   #ready: Promise<void> | undefined;
+  #ownStartIdentity: Promise<string | null> | undefined;
 
   constructor(options: {
     readonly directory: string;
     readonly maxBytes?: number;
     readonly now?: () => Date;
+    /** Process table used to bind build reservations to a start identity. */
+    readonly processHost?: ProcessOwnershipHost;
   }) {
     this.directory = options.directory;
     this.maxBytes = options.maxBytes ?? DEFAULT_GHIDRA_ANALYSIS_CACHE_MAX_BYTES;
     this.#now = options.now ?? (() => new Date());
+    this.#processHost = options.processHost ?? systemProcessOwnershipHost;
+  }
+
+  /**
+   * This process's start identity, observed once. A reservation bound to it
+   * is stale when its PID is reused by another process; null when the host
+   * cannot read identities, in which case PID liveness and age decide.
+   */
+  #startIdentity(): Promise<string | null> {
+    this.#ownStartIdentity ??= observeProcessStartIdentity(
+      process.pid,
+      this.#processHost,
+    ).then(
+      (observed) => (observed?.state === "readable" ? observed.identity : null),
+      () => null,
+    );
+    return this.#ownStartIdentity;
   }
 
   get #root(): string {
@@ -410,12 +438,13 @@ export class GhidraAnalysisCache {
   ): Promise<GhidraAnalysisCacheBuildLease | undefined> {
     await this.#prepare();
     const path = join(this.#root, "leases", ghidraAnalysisCacheKey(identity));
+    const startIdentity = await this.#startIdentity();
     for (let attempt = 0; attempt < 2; attempt += 1) {
       try {
         await mkdir(path, { mode: 0o700 });
         await writeFile(
           join(path, "owner.json"),
-          `${JSON.stringify({ pid: process.pid, created_at: this.#now().toISOString() })}\n`,
+          `${JSON.stringify({ pid: process.pid, created_at: this.#now().toISOString(), ...(startIdentity === null ? {} : { start_identity: startIdentity }) })}\n`,
           { mode: 0o600 },
         );
         let released = false;
@@ -468,7 +497,11 @@ export class GhidraAnalysisCache {
   }
 
   async #leaseIsStale(path: string, staleAfterMs: number): Promise<boolean> {
-    let owner: { readonly pid?: unknown; readonly created_at?: unknown };
+    let owner: {
+      readonly pid?: unknown;
+      readonly created_at?: unknown;
+      readonly start_identity?: unknown;
+    };
     try {
       owner = JSON.parse(await readFile(join(path, "owner.json"), "utf8")) as {
         readonly pid?: unknown;
@@ -495,11 +528,21 @@ export class GhidraAnalysisCache {
     if (typeof owner.pid !== "number") return true;
     try {
       process.kill(owner.pid, 0);
-      return false;
     } catch (cause: unknown) {
       // EPERM: a live process owned by someone else still holds the PID.
       return !isErrno(cause, "EPERM");
     }
+    // A live PID alone does not establish that the recorded builder still
+    // runs: compare the start identity it recorded when available.
+    // Unreadable identity keeps the reservation live until its age expires.
+    if (typeof owner.start_identity !== "string") return false;
+    return (
+      (await observeProcessStartIdentityExit(
+        owner.pid,
+        owner.start_identity,
+        this.#processHost,
+      )) === "exited"
+    );
   }
 
   /** Allocate a private staging directory for one Program. */

@@ -105,9 +105,18 @@ object per session; analysis-memory edits do not change the original bytes.
 ### Universal Mach-O
 
 Ghidra's headless importer cannot be told which slice of a universal (FAT)
-Mach-O to load, so REA commits the slice for the host-selected architecture
-(its FAT table digest, source offset, length and CPU identity) in the analysis
-profile and imports an owned thin copy. The copy is made while hashing the
+Mach-O to load, so REA commits one slice (its FAT table digest, source offset,
+length and CPU identity) in the analysis profile and imports an owned thin
+copy. By default that is the host-compatible slice, so the same file analyzes
+`x86_64` on an Intel Linux host and `arm64` on Apple silicon. Select a slice
+explicitly with `--architecture <arch>` (MCP `open_binary` `architecture`
+without `format`); a missing slice fails with the available architectures.
+The first Evidence limitation names the analyzed slice and the alternatives,
+and the analysis profile and cache key differ per slice:
+
+````sh
+rea decompile Typora-universal 0x100001000 --provider ghidra --architecture arm64 --json
+``` The copy is made while hashing the
 complete source; a changed source, table or selected header fails before
 import, and Ghidra's imported-byte digest must match the copied slice. Target
 identity remains the universal file. `address_to_file_offset`, `search_bytes`
@@ -132,7 +141,7 @@ rea inspect-native-load-image <path> --provider ghidra --json
 rea decompile <path> <observed-procedure-address> --provider ghidra --json
 rea decompile <path> --file-offset=0x1013 --provider ghidra --json
 rea address-to-file-offset <path> <observed-procedure-address> --provider ghidra --json
-```
+````
 
 The load-image result preserves source-file indexes, file offsets, address
 spaces, and inclusive mapping ranges. Follow the mapping for the selected
