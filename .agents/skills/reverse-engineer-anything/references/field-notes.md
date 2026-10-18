@@ -68,9 +68,16 @@ provider runs.
   (`grep -oE '"[a-zA-Z:]+"|cf_[A-Za-z_]+'`) before reading it whole.
 - Scan `Resources/`, `SharedSupport/`, default plists and launchd plists before
   decompiling: they often answer "which external program is invoked and how".
+- **Settings UIs are often a separate bundle.** Pretty-print the preferences
+  bundle and grep its control descriptors (Typora: `keyName:`) — label, key,
+  options and enable/hidden conditions sit together; then check the
+  first-launch initializer for the few defaults actually written.
+- **A localized string is not proof a feature exists.** Confirm it is
+  referenced by the bundle or a native string xref before reporting a surface.
 - **Grep for JS↔native key mismatches.** Typora sends `silent` while native
   reads `slient`; such typos silently disable flags and are cheap to find by
-  diffing the key sets on both sides of a bridge.
+  diffing the key sets on both sides of a bridge (also menu-item key tables:
+  `delete-fences` vs `deleteFences` hides an item silently).
 
 ## Reconstruction work
 
