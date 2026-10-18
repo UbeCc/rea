@@ -40,6 +40,7 @@ export interface LinuxHopperInstallDisclosure {
 export const linuxHopperInstallDisclosure = (
   family: LinuxPackageFamily,
   isRoot: boolean,
+  pythonLibraryPackage?: string,
 ): LinuxHopperInstallDisclosure => {
   return {
     networkOrigins: [
@@ -52,6 +53,7 @@ export const linuxHopperInstallDisclosure = (
       family,
       `<verified-hopper.${family}>`,
       isRoot,
+      pythonLibraryPackage,
     ).map(({ executable, args }) => formatCommandForDisplay(executable, args)),
   };
 };
@@ -68,8 +70,13 @@ interface LinuxDistributionIdentity {
  * narrower than the hosts where REA itself runs, which {@link supportsReaHost}
  * answers from the package family.
  */
-export type LinuxDistribution = LinuxDistributionIdentity &
-  (
+export type LinuxDistribution = LinuxDistributionIdentity & {
+  /**
+   * Debian package providing the shared library of /usr/bin/python3, which
+   * Hopper loads to run scripts; absent when it could not be determined.
+   */
+  readonly pythonLibraryPackage?: string;
+} & (
     | {
         readonly packageFamily: LinuxPackageFamily;
         readonly hopperSetupSupported: true;
@@ -131,6 +138,7 @@ export interface LinuxHopperInstallHost {
   installPackage(
     family: LinuxPackageFamily,
     archive: string,
+    pythonLibraryPackage?: string,
   ): Promise<LinuxPackageInstallOutcome>;
   verifyArchive(
     family: LinuxPackageFamily,
@@ -266,13 +274,49 @@ export const parseLinuxDistribution = (text: string): LinuxDistribution => {
 export const readLinuxDistribution = async (): Promise<
   LinuxDistribution | undefined
 > => {
+  let distribution: LinuxDistribution;
   try {
-    return parseLinuxDistribution(await readFile("/etc/os-release", "utf8"));
+    distribution = parseLinuxDistribution(
+      await readFile("/etc/os-release", "utf8"),
+    );
   } catch (cause: unknown) {
     // best-effort cleanup: optional host probing; unknown distribution means unsupported.
     void cause;
     return undefined;
   }
+  if (distribution.packageFamily !== "deb") return distribution;
+  const pythonLibraryPackage = await resolveDebianPythonLibraryPackage();
+  return pythonLibraryPackage === undefined
+    ? distribution
+    : { ...distribution, pythonLibraryPackage };
+};
+
+const PYTHON_SONAME_QUERY =
+  "import sysconfig;print(sysconfig.get_config_var('INSTSONAME'))";
+
+/**
+ * Name Debian's libpython3.X package for the interpreter Hopper's PythonFinder
+ * selects. Prefer the installed /usr/bin/python3; before python3 is installed,
+ * use the version its package depends on. apt resolves the virtual name to the
+ * providing package (for example libpython3.12t64 on Ubuntu 24.04).
+ */
+export const resolveDebianPythonLibraryPackage = async (
+  run: (
+    command: string,
+    args: readonly string[],
+  ) => Promise<{ readonly stdout: string }> = (command, args) =>
+    execFileOutput(command, args, { timeout: 10_000 }),
+): Promise<string | undefined> => {
+  const installed = await run("/usr/bin/python3", ["-c", PYTHON_SONAME_QUERY])
+    .then(({ stdout }) => /^libpython(3\.\d+)[a-z]*\.so\b/mu.exec(stdout)?.[1])
+    .catch(() => undefined);
+  if (installed !== undefined) return `libpython${installed}`;
+  const candidate = await run("apt-cache", ["depends", "python3"])
+    .then(
+      ({ stdout }) => /^\s*Depends:\s*python(3\.\d+)\s*$/mu.exec(stdout)?.[1],
+    )
+    .catch(() => undefined);
+  return candidate === undefined ? undefined : `libpython${candidate}`;
 };
 
 /** Download, verify, install, and read back the official Hopper Linux package. */
@@ -344,6 +388,7 @@ export const installLinuxHopper = async (
       const install = await host.installPackage(
         distribution.packageFamily,
         archive,
+        distribution.pythonLibraryPackage,
       );
       if (install.status === "failed")
         return {
@@ -418,8 +463,8 @@ export const systemLinuxHopperInstallHost = (
     download: downloadHopperPackage,
     createTemporaryDirectory: () => mkdtemp(join(tmpdir(), "rea-hopper-")),
     writeArchive: (path, bytes) => writeFile(path, bytes, { mode: 0o600 }),
-    installPackage: (family, archive) =>
-      installSystemPackage(family, archive, environment),
+    installPackage: (family, archive, pythonLibraryPackage) =>
+      installSystemPackage(family, archive, environment, pythonLibraryPackage),
     verifyArchive: (family, release, archive, signal) =>
       publisher.verifyArchive(family, release, archive, signal),
     retainVerifiedArchive: (verified, archive, signal) =>
@@ -503,11 +548,13 @@ const installSystemPackage = async (
   family: LinuxPackageFamily,
   archive: string,
   environment: Readonly<NodeJS.ProcessEnv>,
+  pythonLibraryPackage: string | undefined,
 ): Promise<LinuxPackageInstallOutcome> => {
   for (const command of linuxPackageManagerCommands(
     family,
     archive,
     process.getuid?.() === 0,
+    pythonLibraryPackage,
   )) {
     const output = await execFileBoundedOutput(
       command.executable,
@@ -551,13 +598,23 @@ export const linuxPackageManagerCommands = (
   family: LinuxPackageFamily,
   archive: string,
   isRoot: boolean,
+  pythonLibraryPackage?: string,
 ): readonly {
   readonly executable: string;
   readonly args: readonly string[];
 }[] => {
   const runtimeDependencies =
     family === "deb"
-      ? ["xvfb", "xauth", "python3", "libx11-6", "libxtst6"]
+      ? [
+          "xvfb",
+          "xauth",
+          "python3",
+          "libx11-6",
+          "libxtst6",
+          // Hopper loads /usr/bin/python3's shared library to run scripts;
+          // Fedora's python3 and Arch's python already include it.
+          ...(pythonLibraryPackage === undefined ? [] : [pythonLibraryPackage]),
+        ]
       : family === "rpm"
         ? [
             "xorg-x11-server-Xvfb",

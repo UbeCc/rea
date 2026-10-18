@@ -44,6 +44,7 @@ const readyDirectDisplay = async () =>
       strategy: "direct",
       fallback_reason: null,
       xvfb_stderr_bytes: 0,
+      python_library: null,
     },
   }) as const;
 

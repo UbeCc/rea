@@ -290,6 +290,7 @@ const syntheticDiagnostic = (
   strategy,
   fallback_reason: null,
   xvfb_stderr_bytes: 0,
+  python_library: null,
 });
 
 const unavailable = (

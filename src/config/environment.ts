@@ -16,7 +16,9 @@ import {
   providerStartupTimeoutSchema,
 } from "./providerStartupTimeout.js";
 import {
+  DEFAULT_HOPPER_DEMO_RECYCLE_MS,
   DEFAULT_HOPPER_MAX_INSTANCES,
+  DEFAULT_HOPPER_SLOT_WAIT_MS,
   MAX_HOPPER_INSTANCES,
 } from "./hopperInstances.js";
 import { mcpInputSchemaProfileSchema } from "./mcpInputSchemaProfile.js";
@@ -70,6 +72,16 @@ const environmentSchema = z.object({
     .transform(Number)
     .pipe(z.number().int().min(1).max(MAX_HOPPER_INSTANCES))
     .default(DEFAULT_HOPPER_MAX_INSTANCES),
+  REA_HOPPER_SLOT_WAIT_MS: providerStartupTimeoutSchema.default(
+    DEFAULT_HOPPER_SLOT_WAIT_MS,
+  ),
+  // 0 disables proactive recycling of idle Linux demo applications.
+  REA_HOPPER_DEMO_RECYCLE_MS: z
+    .string()
+    .regex(/^(?:0|[1-9]\d*)$/u, "must be a non-negative decimal integer")
+    .transform(Number)
+    .pipe(z.number().int().min(0).max(2_147_483_647))
+    .default(DEFAULT_HOPPER_DEMO_RECYCLE_MS),
   REA_SWIFTC_COMPILE_TIMEOUT_MS: providerStartupTimeoutSchema.default(
     DEFAULT_SWIFTC_COMPILE_TIMEOUT_MS,
   ),

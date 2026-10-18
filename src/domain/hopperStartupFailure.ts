@@ -64,6 +64,11 @@ const failures = [
     "demo_session_expired",
     "Hopper's demo period for this application session expired (the vendor demo limits each launch to about 30 minutes) and its modal dialog blocked analysis. REA stopped its owned demo application. Reopen the target (open_binary, or rerun the command) to start a new demo session; analysis state that was not exported is lost.",
   ],
+  [
+    82,
+    "python_library_unavailable",
+    'Hopper runs REA\'s bridge script through the shared Python library of the interpreter it selects (normally /usr/bin/python3), and that library is not loadable, so Hopper would report "Cannot launch script". Install it (Debian/Ubuntu: the libpython3.X package matching python3 --version, for example libpython3.12t64 on Ubuntu 24.04; Fedora: python3-libs), or rerun rea setup --yes --install-hopper, then rerun rea doctor --provider hopper.',
+  ],
 ] as const;
 
 /**
@@ -88,6 +93,8 @@ interface HopperStartupDiagnosticContext {
   readonly strategy: HopperPrivateDisplayStrategy;
   readonly fallback_reason: string | null;
   readonly xvfb_stderr_bytes: number;
+  /** Shared Python library Hopper would load; null when not determined. */
+  readonly python_library: string | null;
 }
 
 /** Non-secret facts emitted by the Linux private-display adapter. */

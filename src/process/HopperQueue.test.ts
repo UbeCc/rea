@@ -4,7 +4,10 @@ import { createServer } from "node:net";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { afterEach, describe, expect, it } from "vitest";
+import { EventEmitter } from "node:events";
+import type { Socket } from "node:net";
 import { enterLinuxHopperQueue } from "./HopperQueue.js";
+import { sendOwner } from "./HopperLease.js";
 
 const directories: string[] = [];
 
@@ -95,5 +98,33 @@ describe("Linux Hopper slot queue", () => {
     } finally {
       await ticket.leave();
     }
+  });
+});
+
+describe("lease and ticket owner replies", () => {
+  it("absorbs a hang-up from a prober that timed out", async () => {
+    // Without a listener, Node rethrows the socket's EPIPE as an uncaught
+    // exception and the session that holds the slot exits.
+    const socket = Object.assign(new EventEmitter(), {
+      destroyed: false,
+      written: "",
+      end(this: { written: string }, data: string) {
+        this.written = data;
+        setImmediate(() =>
+          socket.emit(
+            "error",
+            Object.assign(new Error("write EPIPE"), { code: "EPIPE" }),
+          ),
+        );
+      },
+      destroy() {
+        socket.destroyed = true;
+      },
+    });
+    sendOwner(socket as unknown as Socket, { runId: "owner", processId: 7 });
+    await new Promise((resolve) => setImmediate(resolve));
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(socket.written).toBe('{"runId":"owner","processId":7}\n');
+    expect(socket.destroyed).toBe(true);
   });
 });

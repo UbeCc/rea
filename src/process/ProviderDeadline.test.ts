@@ -303,3 +303,48 @@ it("reports no remaining time after terminal expiry near the monotonic boundary"
     vi.useRealTimers();
   }
 });
+
+it("keeps its startup budget while paused and resumes with the remainder", async () => {
+  const deadline = new ProviderStartupDeadline(1000);
+  try {
+    await vi.advanceTimersByTimeAsync(300);
+    const resume = deadline.pause();
+    // A slot queue far longer than the budget does not consume it.
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(deadline.signal.aborted).toBe(false);
+    expect(deadline.interruption).toBeUndefined();
+    expect(deadline.remainingMs()).toBe(700);
+    await expect(
+      Promise.race([
+        deadline.wait(500),
+        vi.advanceTimersByTimeAsync(500).then(() => "pending"),
+      ]),
+    ).resolves.toBe("elapsed");
+    resume();
+    resume();
+    await vi.advanceTimersByTimeAsync(699);
+    expect(deadline.signal.aborted).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(deadline.interruption).toBe("timeout");
+    expect(vi.getTimerCount()).toBe(0);
+  } finally {
+    deadline.dispose();
+  }
+});
+
+it("classifies caller cancellation during a pause as cancellation", async () => {
+  const controller = new AbortController();
+  const reason = new Error("caller left the queue");
+  const deadline = new ProviderStartupDeadline(1000, controller.signal);
+  try {
+    const resume = deadline.pause();
+    await vi.advanceTimersByTimeAsync(5_000);
+    controller.abort(reason);
+    expect(deadline.interruption).toBe("cancelled");
+    expect(deadline.signal.reason).toBe(reason);
+    resume();
+    expect(vi.getTimerCount()).toBe(0);
+  } finally {
+    deadline.dispose();
+  }
+});

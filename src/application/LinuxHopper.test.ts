@@ -9,6 +9,7 @@ import {
   linuxPackageManagerCommands,
   linuxSharedLibrariesAvailable,
   parseLinuxDistribution,
+  resolveDebianPythonLibraryPackage,
   supportsReaHost,
   LinuxHopperTemporaryCleanupOwner,
   systemLinuxHopperInstallHost,
@@ -66,7 +67,11 @@ class RecordingLinuxHost implements LinuxHopperInstallHost {
   };
   launcherStatusValue: LinuxHopperLauncherStatus = "ready";
   downloads: string[] = [];
-  installed: Array<{ family: LinuxPackageFamily; archive: string }> = [];
+  installed: Array<{
+    family: LinuxPackageFamily;
+    archive: string;
+    pythonLibraryPackage?: string;
+  }> = [];
   cleaned: string[] = [];
 
   distribution = (): Promise<LinuxDistribution | undefined> =>
@@ -123,10 +128,15 @@ class RecordingLinuxHost implements LinuxHopperInstallHost {
   installPackage = (
     family: LinuxPackageFamily,
     archive: string,
+    pythonLibraryPackage?: string,
   ): Promise<LinuxPackageInstallOutcome> => {
     if (!this.verifiedBeforeInstall)
       throw new Error("Package manager ran before publisher verification");
-    this.installed.push({ family, archive });
+    this.installed.push({
+      family,
+      archive,
+      ...(pythonLibraryPackage === undefined ? {} : { pythonLibraryPackage }),
+    });
     const outcome: LinuxPackageInstallOutcome = this.installSucceeds
       ? { status: "installed" }
       : { status: "failed", failure: this.packageFailure };
@@ -259,6 +269,71 @@ describe("Linux Hopper installation", () => {
   );
 });
 
+describe("Hopper's shared Python library package", () => {
+  it("adds the resolved Debian package to the apt install only", () => {
+    expect(
+      linuxPackageManagerCommands("deb", "/tmp/h.deb", true, "libpython3.12"),
+    ).toEqual([
+      {
+        executable: "apt-get",
+        args: [
+          "install",
+          "-y",
+          "/tmp/h.deb",
+          "xvfb",
+          "xauth",
+          "python3",
+          "libx11-6",
+          "libxtst6",
+          "libpython3.12",
+        ],
+      },
+    ]);
+    // Fedora's python3 and Arch's python already ship the shared library.
+    expect(
+      linuxPackageManagerCommands("rpm", "/tmp/h.rpm", true, "libpython3.12")
+        .flatMap(({ args }) => args)
+        .some((value) => value.startsWith("libpython")),
+    ).toBe(false);
+  });
+
+  it("resolves the package from the installed interpreter, then apt", async () => {
+    const calls: string[] = [];
+    const run =
+      (outputs: Readonly<Record<string, string | Error>>) =>
+      async (command: string) => {
+        calls.push(command);
+        const output = outputs[command];
+        if (output === undefined || output instanceof Error)
+          throw output ?? new Error(`unexpected ${command}`);
+        return { stdout: output };
+      };
+    await expect(
+      resolveDebianPythonLibraryPackage(
+        run({ "/usr/bin/python3": "libpython3.12.so.1.0\n" }),
+      ),
+    ).resolves.toBe("libpython3.12");
+    expect(calls).toEqual(["/usr/bin/python3"]);
+    calls.length = 0;
+    await expect(
+      resolveDebianPythonLibraryPackage(
+        run({
+          "/usr/bin/python3": new Error("ENOENT"),
+          "apt-cache":
+            "python3\n  PreDepends: python3-minimal\n  Depends: python3.13\n  Depends: libpython3-stdlib\n",
+        }),
+      ),
+    ).resolves.toBe("libpython3.13");
+    expect(calls).toEqual(["/usr/bin/python3", "apt-cache"]);
+    // A static interpreter and no apt candidate leave the package unknown.
+    await expect(
+      resolveDebianPythonLibraryPackage(
+        run({ "/usr/bin/python3": "None\n", "apt-cache": "python3\n" }),
+      ),
+    ).resolves.toBeUndefined();
+  });
+});
+
 describe("Linux Hopper package installation", () => {
   it.each(["deb", "rpm", "arch"] as const)(
     "downloads, verifies, installs, reads back, and cleans a %s package",
@@ -280,6 +355,25 @@ describe("Linux Hopper package installation", () => {
       expect(host.cleaned).toEqual(["/tmp/rea test"]);
     },
   );
+
+  it("installs the Python library package resolved with the distribution", async () => {
+    const host = new RecordingLinuxHost();
+    host.distributionValue = {
+      id: "ubuntu",
+      versionId: "24.04",
+      packageFamily: "deb",
+      hopperSetupSupported: true,
+      pythonLibraryPackage: "libpython3.12",
+    };
+    expect(await installFixture(host)).toMatchObject({ status: "installed" });
+    expect(host.installed).toEqual([
+      {
+        family: "deb",
+        archive: "/tmp/rea test/hopper.deb",
+        pythonLibraryPackage: "libpython3.12",
+      },
+    ]);
+  });
 });
 
 describe("Linux Hopper installation failure classification", () => {

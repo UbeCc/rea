@@ -55,6 +55,30 @@ describe("Linux publisher cache approval", () => {
   );
 });
 
+describe("Linux Hopper Python library disclosure", () => {
+  it("plans the shared Python library package with Hopper's dependencies", async () => {
+    const host = new FakeSetupHost("linux");
+    host.distribution = {
+      id: "ubuntu",
+      versionId: "24.04",
+      packageFamily: "deb",
+      hopperSetupSupported: true,
+      pythonLibraryPackage: "libpython3.12",
+    };
+    const result = await runSetup(options(false, true), host);
+    const install = result.plannedActions.find(
+      ({ kind }) => kind === "install_hopper",
+    );
+    expect(install?.commands).toEqual([
+      expect.stringMatching(
+        /apt-get install -y "?<verified-hopper\.deb>"? xvfb xauth python3 libx11-6 libxtst6 libpython3\.12$/u,
+      ),
+    ]);
+    expect(install?.detail).toContain("shared Python library");
+    expect(host.hopperInstalls).toBe(0);
+  });
+});
+
 describe("selected skill admission", () => {
   it.each(["codex", "shared"] as const)(
     "keeps %s choices when an unselected client is linked",

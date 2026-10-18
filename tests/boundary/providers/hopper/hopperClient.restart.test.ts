@@ -58,3 +58,53 @@ describe("HopperClient restart", () => {
     });
   });
 });
+
+describe("HopperClient demo-session recycling", () => {
+  const recyclingClient = (launcher: FixtureLauncher) => {
+    const client = new HopperClient({
+      launcher,
+      startupTimeoutMs: 10_000,
+      demoRecycleAfterMs: 1_500,
+    });
+    onTestFinished(async () => {
+      await client.close();
+    });
+    return client;
+  };
+  const pause = (ms: number) =>
+    new Promise((resolve) => setTimeout(resolve, ms));
+
+  it("relaunches an idle owned application past the recycle age", async () => {
+    const launcher = new FixtureLauncher();
+    const client = recyclingClient(launcher);
+    await expect(client.callTool("echo", { value: 1 })).resolves.toMatchObject({
+      ok: true,
+    });
+    await expect(client.callTool("echo", { value: 2 })).resolves.toMatchObject({
+      ok: true,
+    });
+    expect(launcher.runIds).toHaveLength(1);
+    await pause(1_600);
+    await expect(client.callTool("echo", { value: 3 })).resolves.toEqual({
+      ok: true,
+      value: { value: 3 },
+    });
+    // The aged application was closed and its process reaped before a fresh
+    // launch served the request.
+    expect(launcher.runIds).toHaveLength(2);
+    expect(
+      launcher.processes[0]?.exitCode ?? launcher.processes[0]?.signalCode,
+    ).not.toBeNull();
+  });
+
+  it("keeps an application holding analyst edits", async () => {
+    const launcher = new FixtureLauncher();
+    const client = recyclingClient(launcher);
+    await client.callTool("set_comment", { address: "0x1000", comment: "x" });
+    await pause(1_600);
+    await expect(client.callTool("echo", { value: 1 })).resolves.toMatchObject({
+      ok: true,
+    });
+    expect(launcher.runIds).toHaveLength(1);
+  });
+});

@@ -30,6 +30,7 @@ const diagnosticContextSchema = z.object({
     .regex(/^[a-z0-9_]+$/u)
     .nullable(),
   xvfb_stderr_bytes: z.number().int().nonnegative().safe(),
+  python_library: z.string().min(1).max(4096).startsWith("/").nullable(),
 });
 
 const failureCodeSchema = z.string().transform((value, context) => {

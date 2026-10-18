@@ -258,6 +258,7 @@ export class HopperProvider implements AnalysisProviderCandidate {
           ? {
               launchMode: "verified_linux_demo" as const,
               maxLinuxInstances: this.config.hopperMaxInstances,
+              linuxSlotWaitMs: this.config.hopperSlotWaitMs,
               demoHelperPath: fileURLToPath(
                 new URL("../../scripts/hopper-demo-x11.py", import.meta.url),
               ),
@@ -266,6 +267,9 @@ export class HopperProvider implements AnalysisProviderCandidate {
       }),
       ...(context === undefined ? {} : { runId: context.runId }),
       startupTimeoutMs: this.config.hopperStartupTimeoutMs,
+      ...(this.platform === "linux"
+        ? { demoRecycleAfterMs: this.config.hopperDemoRecycleMs }
+        : {}),
       logger: this.logger.child({ layer: "bridge" }),
       onDiagnostic: (diagnostic) =>
         this.logger.info(diagnostic, "Hopper bridge reported a diagnostic"),
