@@ -20,6 +20,13 @@ provider runs.
 - **Same front end, several platforms.** Look for platform switches
   (`isMac`/`isNode`) next to bridge calls: one branch calls native, the other a
   Worker/Node API. Comparing both explains *why* the native path exists.
+- **Menus and shortcuts: decode the nib before decompiling.** `MainMenu.nib`
+  gives the full menu tree, key equivalents and target selectors in seconds
+  (`decode_interface_builder`, or a NIBArchive parser). Items AppKit injects at
+  runtime (Duplicate/Rename/Move To/Revert To under autosave-in-place) and
+  menus rebuilt in `menuWillOpen:` are absent from the nib — check both.
+- ObjC category methods (`-[C(Cat) sel]`) often do not resolve by name in
+  providers; resolve them to addresses (nm / method maps) first.
 - Non-Electron JS hosts that REA's IPC model does not see: VS Code RPC over
   MessagePort (`$`-prefixed proxies), Gecko privileged bridges
   (`wrappedJSObject`, `Cu.cloneInto`). Anchor on channel names, log tags and
