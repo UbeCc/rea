@@ -47,8 +47,7 @@ export async function* readProcessRunTokens(
           Object.keys(environment).length === 0
             ? {
                 state: "unavailable",
-                reason:
-                  "process environment was empty (the process may be exiting)",
+                reason: EMPTY_ENVIRONMENT_REASON,
               }
             : { state: "readable", runId: environment.REA_PROCESS_RUN_ID };
       } catch (cause: unknown) {
@@ -67,3 +66,7 @@ export async function* readProcessRunTokens(
     yield { process, observation };
   }
 }
+
+/** Reason for an empty environment read, typical of an exiting process. */
+export const EMPTY_ENVIRONMENT_REASON =
+  "process environment was empty (the process may be exiting)";

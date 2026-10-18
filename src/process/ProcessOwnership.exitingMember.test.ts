@@ -79,3 +79,19 @@ it("waits for an exiting launcher shown by its bracketed kernel name", async () 
   expect(result).toMatchObject({ cleaned: true });
   expect(snapshots).toBeGreaterThan(3);
 });
+
+it("waits for a member that stays listed while its environment reads empty", async () => {
+  let snapshots = 0;
+  const adapter: ProcessOwnershipHost = {
+    platform: "linux",
+    // The exiting member remains in the table for several snapshots.
+    listProcesses: () =>
+      Promise.resolve((snapshots += 1) <= 4 ? [launcher, exiting] : [launcher]),
+    environment: (pid) =>
+      Promise.resolve(pid === 101 ? {} : { REA_PROCESS_RUN_ID: "run-token" }),
+    signalGroup: vi.fn(),
+  };
+  expect(await cleanupOwnedProcessGroup(ownership, adapter)).toMatchObject({
+    cleaned: true,
+  });
+});

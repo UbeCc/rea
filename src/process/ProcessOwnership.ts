@@ -1,3 +1,4 @@
+import { EMPTY_ENVIRONMENT_REASON } from "./ProcessRunTokenObservations.js";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 
@@ -855,6 +856,25 @@ const recheckOwnershipFailures = async (
     ) {
       await new Promise<void>((resolve) =>
         setTimeout(resolve, TOKEN_READ_RETRY_DELAY_MS),
+      );
+      processes = await host.listProcesses();
+    }
+    // A Linux process that already released its address space reads an
+    // empty environment while unmapping a large heap; wait a bounded time.
+    for (
+      let attempt = 0;
+      attempt < EXITING_LAUNCHER_REFRESH_ATTEMPTS &&
+      liveProcesses(processes).some(({ pid }) =>
+        failures.some(
+          (failure) =>
+            failure.pid === pid &&
+            failure.diagnostic?.includes(EMPTY_ENVIRONMENT_REASON) === true,
+        ),
+      );
+      attempt += 1
+    ) {
+      await new Promise<void>((resolve) =>
+        setTimeout(resolve, EXITING_LAUNCHER_REFRESH_DELAY_MS),
       );
       processes = await host.listProcesses();
     }
