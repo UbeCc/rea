@@ -81,6 +81,10 @@ provider runs.
 
 ## Reconstruction work
 
+- When two RE write-ups disagree, prefer the lower-level extraction (a regex
+  or table read straight from the bundle) over older summary prose, and fix the
+  prose. Nib menu items with no selector are a trap: document them as unknown.
+
 - Keep a dirty room (RE notes, decompiled artifacts local and untracked) and a
   clean room (implementers read only prose sections). Route missing details
   through `question` issues answered in prose.
